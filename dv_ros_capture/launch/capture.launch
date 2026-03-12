@@ -1,3 +1,0 @@
-<launch>
-    <node pkg="dv_ros_capture" type="capture_node" name="capture_node" clear_params="true" output="screen" />
-</launch>

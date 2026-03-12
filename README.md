@@ -40,7 +40,7 @@ computer and validate the build by running visualization sample:
 
 ```
 source devel/setup.bash
-roslaunch dv_ros_visualization event_visualization.launch
+roslaunch dv_ros2_visualization event_visualization.launch
 ```
 
 You should see a preview of events coming from the iniVation camera connected to your computer.
@@ -57,11 +57,11 @@ node replacing the individual nodes for each type of iniVation camera (`davis_ro
 
 The repository contains multiple projects:
 
-- dv_ros_msgs - Basic data types for the cameras
-- dv_ros_messaging - C++ headers required to use dv-processing in ROS nodes
-- dv_ros_capture - Camera driver node (supports live camera data streaming and aedat4 file playback)
-- dv_ros_accumulation - Event stream to frame accumulation
-- dv_ros_aedat4 - Convert aedat4 files to rosbags
-- dv_ros_runtime_modules - DV runtime modules for integration with ROS
-- dv_ros_visualization - Simple visualization of events
-- dv_ros_tracker - Lucas-Kanade feature trackers for event and image streams
+- dv_ros2_msgs - Basic data types for the cameras
+- dv_ros2_messaging - C++ headers required to use dv-processing in ROS nodes
+- dv_ros2_capture - Camera driver node (supports live camera data streaming and aedat4 file playback)
+- dv_ros2_accumulation - Event stream to frame accumulation
+- dv_ros2_aedat4 - Convert aedat4 files to rosbags
+- dv_ros2_runtime_modules - DV runtime modules for integration with ROS
+- dv_ros2_visualization - Simple visualization of events
+- dv_ros2_tracker - Lucas-Kanade feature trackers for event and image streams

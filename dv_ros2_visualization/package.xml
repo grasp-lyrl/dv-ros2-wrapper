@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>dv_ros2_visualization</name>
+  <version>1.3.0</version>
+  <description>Simple visualization of events from iniVation cameras.</description>
+  <maintainer email="support@inivation.com">iniVation</maintainer>
+  <license>Apache2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>dv_ros2_msgs</depend>
+  <depend>dv_ros2_messaging</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

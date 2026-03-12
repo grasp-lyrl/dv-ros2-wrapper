@@ -67,9 +67,9 @@ IncludeBlocks:   Regroup
 IncludeCategories:
   - Regex:           'dv-processing/'
     Priority:        1
-  - Regex:           'dv_ros_messaging/'
+  - Regex:           'dv_ros2_messaging/'
     Priority:        2
-  - Regex:           'dv_ros_*'
+  - Regex:           'dv_ros2_*'
     Priority:        3
   - Regex:           '^".*external/.*'
     Priority:        4
