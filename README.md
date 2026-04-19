@@ -1,67 +1,59 @@
-# DV ROS
+# DV ROS2
 
-ROS drivers and sample nodes for iniVation cameras and DV software infrastructure.
+ROS2 drivers and sample nodes for iniVation cameras and DV software infrastructure.
 
 ## Installation on Ubuntu OS
 
-The code depends on DV software libraries, these libraries need to be installed for the ROS nodes to compile. Enable the
-appropriate iniVation PPA depending on your Ubuntu distribution:
+The code depends on DV software libraries. Enable the iniVation PPA for your Ubuntu distribution:
 
-- For Ubuntu 20.04, 22.04 and 24.04:
-
-```
+```bash
 sudo add-apt-repository ppa:ubuntu-toolchain-r/test
 sudo add-apt-repository ppa:inivation-ppa/inivation
 sudo apt update
 sudo apt install dv-processing dv-runtime-dev gcc-13 g++-13
 ```
 
-Some extra ROS dependencies might also be needed:
+Some extra ROS2 dependencies are also needed:
 
-```
-# Example for ROS Noetic on Ubuntu 20.04
-sudo apt install python3-catkin python3-catkin-tools ros-noetic-catkin ros-noetic-camera-info-manager ros-noetic-tf2 ros-noetic-tf2-ros ros-noetic-tf2-sensor-msgs
+```bash
+sudo apt install python3-rosdep python3-colcon-common-extensions ros-humble-camera-info-manager ros-humble-tf2-sensor-msgs ros-dev-tools
 ```
 
-The project is build using catkin tools, run the following commands from your catkin workspace:
+Clone the repository and build:
 
-```
-# Run in your catkin workspace root directory
-cd src
-git clone https://gitlab.com/inivation/dv/dv-ros.git
-cd ..
-catkin build --cmake-args -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13
+```bash
+mkdir -p ~/dv_ws/src && cd ~/dv_ws/src
+git clone git@github.com:grasp-lyrl/neurofly.git
+cd ~/dv_ws
+rosdep install --from-paths src/neurofly/dv-ros2-wrapper --ignore-src -r -y
+colcon build --symlink-install --parallel-workers 4 \
+             --cmake-args -DCMAKE_BUILD_TYPE=Release \
+                          -DCMAKE_C_COMPILER=gcc-13 \
+                          -DCMAKE_CXX_COMPILER=g++-13
 ```
 
 ## Verifying the build
 
-After the build, source your environment to load the information about the new packages, connect your camera to the
-computer and validate the build by running visualization sample:
+After the build, source your environment, connect your iniVation camera, and validate by running the capture driver:
 
-```
-source devel/setup.bash
-roslaunch dv_ros2_visualization event_visualization.launch
+```bash
+source ~/dv_ws/install/local_setup.bash
+ros2 launch dv_ros2_capture driver.launch.py
 ```
 
-You should see a preview of events coming from the iniVation camera connected to your computer.
+You should see events and IMU frames streaming from the connected iniVation camera.
 
 ## Compatibility
 
-The message types for events are designed to be compatible with the types available in
-[rpg_dvs_ros](https://github.com/uzh-rpg/rpg_dvs_ros) repository, so the communication is possible with all nodes
-developed using those event message types (Event and EventArray). The `capture_node` is designed to be a more general
-node replacing the individual nodes for each type of iniVation camera (`davis_ros_driver`, `dvs_ros_driver`, and
-`dvxplorer_ros_driver`).
+The message types for events are designed to be compatible with types available in
+[rpg_dvs_ros](https://github.com/uzh-rpg/rpg_dvs_ros), enabling communication with nodes developed using those event
+message types (`Event` and `EventArray`).
 
 ## Repository structure
 
-The repository contains multiple projects:
+The `dv-ros2-wrapper` directory inside this repository contains the following packages:
 
-- dv_ros2_msgs - Basic data types for the cameras
-- dv_ros2_messaging - C++ headers required to use dv-processing in ROS nodes
-- dv_ros2_capture - Camera driver node (supports live camera data streaming and aedat4 file playback)
-- dv_ros2_accumulation - Event stream to frame accumulation
-- dv_ros2_aedat4 - Convert aedat4 files to rosbags
-- dv_ros2_runtime_modules - DV runtime modules for integration with ROS
-- dv_ros2_visualization - Simple visualization of events
-- dv_ros2_tracker - Lucas-Kanade feature trackers for event and image streams
+- `dv_ros2_msgs` - Basic message types for iniVation cameras (events, frames, IMU, triggers)
+- `dv_ros2_messaging` - C++ headers for using dv-processing within ROS2 nodes
+- `dv_ros2_capture` - Camera driver node supporting live streaming from iniVation cameras
+- `dv_ros2_visualization` - Simple event stream visualization node
