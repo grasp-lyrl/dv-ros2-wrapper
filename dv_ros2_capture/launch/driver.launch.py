@@ -35,6 +35,13 @@ def generate_launch_description():
                     name='visualization_node',
                     extra_arguments=[{'use_intra_process_comms': True}],
                 ),
+                ComposableNode(
+                    condition=IfCondition(LaunchConfiguration('visualization_enable')),
+                    package='dv_ros2_visualization',
+                    plugin='dv_visualization_node::ImuVisualizationNode',
+                    name='imu_visualization_node',
+                    extra_arguments=[{'use_intra_process_comms': True}],
+                )
             ],
             output='screen',
         )

@@ -19,7 +19,16 @@ target_link_libraries(visualization_node_component dv::processing)
 
 rclcpp_components_register_nodes(visualization_node_component "dv_visualization_node::VisualizationNode")
 
-install(TARGETS visualization_node_component
+# IMU visualization component
+add_library(imu_visualization_node_component SHARED src/imu_visualization_node.cpp)
+ament_target_dependencies(imu_visualization_node_component
+  rclcpp rclcpp_components std_msgs sensor_msgs dv_ros2_msgs dv_ros2_messaging
+)
+target_link_libraries(imu_visualization_node_component dv::processing)
+
+rclcpp_components_register_nodes(imu_visualization_node_component "dv_visualization_node::ImuVisualizationNode")
+
+install(TARGETS visualization_node_component imu_visualization_node_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
