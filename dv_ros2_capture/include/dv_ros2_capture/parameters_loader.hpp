@@ -23,6 +23,7 @@ struct Params {
 	bool unbiasedImuData           = true;
 	bool noiseFiltering            = false;
 	int64_t noiseBATime            = 2000;
+	bool undistortEvents           = false;
 
 	std::vector<std::string> syncDeviceList;
 	bool waitForSync = false;

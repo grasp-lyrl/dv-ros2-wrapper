@@ -15,6 +15,8 @@
 
 #include <boost/lockfree/spsc_queue.hpp>
 
+#include <opencv2/core.hpp>
+
 #include <rclcpp/rclcpp.hpp>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -96,6 +98,8 @@ private:
 
 	// Camera info message buffer
 	dv_ros2_msgs::CameraInfoMessage mCameraInfoMsg;
+	dv_ros2_msgs::CameraInfoMessage mRawCameraInfoMsg;
+	cv::Mat mUndistortMap;
 	std::unique_ptr<std::thread> mCameraInfoThread = nullptr;
 
 	// threads related
@@ -167,6 +171,16 @@ private:
 	 * Create a camera info message.
 	 */
 	void populateInfoMsg(const dv::camera::CameraGeometry &cameraGeometry);
+
+	/**
+	 * Update the event undistortion lookup table and the published camera intrinsics.
+	 */
+	void updateEventUndistortionParams();
+
+	/**
+	 * Undistort event coordinates using the stored lookup table.
+	 */
+	[[nodiscard]] dv::EventStore undistortEvents(const dv::EventStore &events);
 
 	/**
 	 * Convert the imu message frame into the camera frame if the transformation exists.

@@ -21,6 +21,7 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 	node_.declare_parameter("unbiasedImuData", params_.unbiasedImuData);
 	node_.declare_parameter("noiseFiltering", params_.noiseFiltering);
 	node_.declare_parameter("noiseBackgroundActivityTime", static_cast<int>(params_.noiseBATime));
+	node_.declare_parameter("undistortEvents", params_.undistortEvents);
 	node_.declare_parameter("cameraCalibrationFilePath", std::string(""));
 	node_.declare_parameter("aedat4FilePath", std::string(""));
 	node_.declare_parameter("syncDevices", std::vector<std::string>{});
@@ -52,6 +53,7 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 
 	int noiseBATime = node_.get_parameter("noiseBackgroundActivityTime").as_int();
 	params_.noiseBATime = static_cast<int64_t>(noiseBATime);
+	params_.undistortEvents = node_.get_parameter("undistortEvents").as_bool();
 
 	std::string tmp = node_.get_parameter("cameraCalibrationFilePath").as_string();
 	params_.cameraCalibrationFilePath = static_cast<std::filesystem::path>(tmp);
@@ -98,6 +100,7 @@ void ParametersLoader::printConfiguration() {
 	RCLCPP_INFO(node_.get_logger(), "cameraCalibrationFilePath: %s", params_.cameraCalibrationFilePath.c_str());
 	RCLCPP_INFO(node_.get_logger(), "noiseFiltering: %s", params_.noiseFiltering ? "yes" : "no");
 	RCLCPP_INFO(node_.get_logger(), "noiseBackgroundActivityTime: %ld", params_.noiseBATime);
+	RCLCPP_INFO(node_.get_logger(), "undistortEvents: %s", params_.undistortEvents ? "yes" : "no");
 	RCLCPP_INFO(node_.get_logger(), "syncDevices: [%s]", fmt::format("{}", fmt::join(params_.syncDeviceList, ", ")).c_str());
 	RCLCPP_INFO(node_.get_logger(), "waitForSync: %s", params_.waitForSync ? "yes" : "no");
 	RCLCPP_INFO(node_.get_logger(), "colorMode: %d", params_.colorMode);

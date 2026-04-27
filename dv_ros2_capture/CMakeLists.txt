@@ -13,6 +13,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(dv_ros2_msgs REQUIRED)
 find_package(dv_ros2_messaging REQUIRED)
 find_package(dv-processing 2.0.0 REQUIRED)
+find_package(OpenCV REQUIRED)
 find_package(rclcpp_components REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -24,7 +25,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES std_msgs sensor_msgs geometry_msgs builtin_interfaces
 )
 
-include_directories(include)
+include_directories(include ${OpenCV_INCLUDE_DIRS})
 
 # Component shared library
 set(COMPONENT_SOURCE src/parameters_loader.cpp src/capture_node.cpp)
@@ -37,7 +38,7 @@ ament_target_dependencies(capture_node_component
   dv_ros2_msgs dv_ros2_messaging
 )
 
-target_link_libraries(capture_node_component dv::processing)
+target_link_libraries(capture_node_component dv::processing ${OpenCV_LIBS})
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} rosidl_typesupport_cpp)
 target_link_libraries(capture_node_component "${cpp_typesupport_target}")
@@ -60,6 +61,10 @@ install(TARGETS capture_node
 
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
+)
+
+install(DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
 )
 
 install(DIRECTORY include/
