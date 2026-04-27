@@ -20,7 +20,7 @@
     # calibration file will be subtracted out of the raw IMU stream
     unbiasedImuData: true
     # Path to the camera calibration file
-    cameraCalibrationFilePath: "/home/dcist/dv_ros2_ws/calib/calib_epa_60deg.xml"
+    cameraCalibrationFilePath: ""
     # Path to the aedat4 file, if not specified the first available camera will be read
     aedat4FilePath: ""
     # Camera to be read
