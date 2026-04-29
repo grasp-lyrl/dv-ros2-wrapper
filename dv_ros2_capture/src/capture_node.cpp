@@ -165,6 +165,23 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &options) :
 		}
 	}
 
+	// IMPORTANT: User-supplied static IMU biases override anything
+	// loaded from the camera calibration file.
+	if (mParams.accelerometerBias.size() == 3) {
+		mAccBiases.x() = static_cast<float>(mParams.accelerometerBias[0]);
+		mAccBiases.y() = static_cast<float>(mParams.accelerometerBias[1]);
+		mAccBiases.z() = static_cast<float>(mParams.accelerometerBias[2]);
+		RCLCPP_INFO(this->get_logger(), "Applied accelerometer bias from yaml: [%+.4f, %+.4f, %+.4f]",
+			mAccBiases.x(), mAccBiases.y(), mAccBiases.z());
+	}
+	if (mParams.gyroscopeBias.size() == 3) {
+		mGyroBiases.x() = static_cast<float>(mParams.gyroscopeBias[0]);
+		mGyroBiases.y() = static_cast<float>(mParams.gyroscopeBias[1]);
+		mGyroBiases.z() = static_cast<float>(mParams.gyroscopeBias[2]);
+		RCLCPP_INFO(this->get_logger(), "Applied gyroscope bias from yaml:     [%+.6f, %+.6f, %+.6f]",
+			mGyroBiases.x(), mGyroBiases.y(), mGyroBiases.z());
+	}
+
 	// Configure camera-specific hardware settings and register dynamic parameter callback
 	configureCameraHardware();
 

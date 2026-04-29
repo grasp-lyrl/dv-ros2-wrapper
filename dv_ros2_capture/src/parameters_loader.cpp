@@ -36,6 +36,9 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 	node_.declare_parameter("contrastThresholdOn", params_.contrastThresholdOn);
 	node_.declare_parameter("contrastThresholdOff", params_.contrastThresholdOff);
 
+	node_.declare_parameter("accelerometerBias", std::vector<double>{});
+	node_.declare_parameter("gyroscopeBias", std::vector<double>{});
+
 	params_.frames = node_.get_parameter("frames").as_bool();
 	params_.events = node_.get_parameter("events").as_bool();
 	params_.imu    = node_.get_parameter("imu").as_bool();
@@ -78,6 +81,19 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 	params_.globalHold           = node_.get_parameter("globalHold").as_bool();
 	params_.contrastThresholdOn  = static_cast<int>(node_.get_parameter("contrastThresholdOn").as_int());
 	params_.contrastThresholdOff = static_cast<int>(node_.get_parameter("contrastThresholdOff").as_int());
+
+	params_.accelerometerBias = node_.get_parameter("accelerometerBias").as_double_array();
+	params_.gyroscopeBias     = node_.get_parameter("gyroscopeBias").as_double_array();
+	if (!params_.accelerometerBias.empty() && params_.accelerometerBias.size() != 3) {
+		throw std::invalid_argument(
+			fmt::format("accelerometerBias must have exactly 3 entries [x, y, z], got {}",
+				params_.accelerometerBias.size()));
+	}
+	if (!params_.gyroscopeBias.empty() && params_.gyroscopeBias.size() != 3) {
+		throw std::invalid_argument(
+			fmt::format("gyroscopeBias must have exactly 3 entries [x, y, z], got {}",
+				params_.gyroscopeBias.size()));
+	}
 }
 
 Params ParametersLoader::getParams() {
@@ -110,5 +126,13 @@ void ParametersLoader::printConfiguration() {
 	RCLCPP_INFO(node_.get_logger(), "globalHold: %s", params_.globalHold ? "yes" : "no");
 	RCLCPP_INFO(node_.get_logger(), "contrastThresholdOn: %d", params_.contrastThresholdOn);
 	RCLCPP_INFO(node_.get_logger(), "contrastThresholdOff: %d", params_.contrastThresholdOff);
+	if (params_.accelerometerBias.size() == 3) {
+		RCLCPP_INFO(node_.get_logger(), "accelerometerBias (m/s^2): [%+.6f, %+.6f, %+.6f]",
+			params_.accelerometerBias[0], params_.accelerometerBias[1], params_.accelerometerBias[2]);
+	}
+	if (params_.gyroscopeBias.size() == 3) {
+		RCLCPP_INFO(node_.get_logger(), "gyroscopeBias (rad/s):    [%+.6f, %+.6f, %+.6f]",
+			params_.gyroscopeBias[0], params_.gyroscopeBias[1], params_.gyroscopeBias[2]);
+	}
 	RCLCPP_INFO(node_.get_logger(), ">>>>>> End of parameters <<<<<<");
 }

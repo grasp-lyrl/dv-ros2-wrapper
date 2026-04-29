@@ -38,6 +38,12 @@ struct Params {
 	bool globalHold         = true;
 	int contrastThresholdOn  = 9;
 	int contrastThresholdOff = 9;
+
+	// Static IMU bias overrides. Empty = fall back to calibration file values.
+	// Order: [x, y, z]. Accel in m/s^2, gyro in rad/s. These are the values
+	// that get *subtracted* from raw IMU samples when unbiasedImuData is true.
+	std::vector<double> accelerometerBias;
+	std::vector<double> gyroscopeBias;
 };
 
 /**

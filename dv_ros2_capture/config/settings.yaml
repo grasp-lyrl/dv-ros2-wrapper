@@ -33,3 +33,11 @@
     waitForSync: false
     # Undistort events using the camera calibration parameters
     undistortEvents: false
+    # Static IMU biases [x, y, z]. When non-empty (length 3), these override
+    # any bias values loaded from the camera calibration file. Subtracted from
+    # raw IMU samples when unbiasedImuData is true. Leave empty ([]) to fall
+    # back to the calibration file. Copy-paste from a bias.json calibration:
+    #   accelerometer_bias_refined_m_s2 -> accelerometerBias
+    #   gyroscope_bias_rad_s            -> gyroscopeBias
+    # accelerometerBias: [0.822333771293767, -0.4204056391087951, 0.13869418012856144]
+    # gyroscopeBias:     [-0.008375375021517997, -0.0031113306658109284, -0.0039612173365261875]
