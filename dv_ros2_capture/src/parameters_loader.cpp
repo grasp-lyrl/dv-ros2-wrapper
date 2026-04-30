@@ -39,6 +39,12 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 	node_.declare_parameter("accelerometerBias", std::vector<double>{});
 	node_.declare_parameter("gyroscopeBias", std::vector<double>{});
 
+	// DVXplorer/DVXplorerM IMU rate and oversampling filter settings
+	node_.declare_parameter("imuAccelDataRate", params_.imuAccelDataRate);
+	node_.declare_parameter("imuGyroDataRate", params_.imuGyroDataRate);
+	node_.declare_parameter("imuAccelFilter", params_.imuAccelFilter);
+	node_.declare_parameter("imuGyroFilter", params_.imuGyroFilter);
+
 	params_.frames = node_.get_parameter("frames").as_bool();
 	params_.events = node_.get_parameter("events").as_bool();
 	params_.imu    = node_.get_parameter("imu").as_bool();
@@ -84,6 +90,11 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 
 	params_.accelerometerBias = node_.get_parameter("accelerometerBias").as_double_array();
 	params_.gyroscopeBias     = node_.get_parameter("gyroscopeBias").as_double_array();
+
+	params_.imuAccelDataRate = node_.get_parameter("imuAccelDataRate").as_string();
+	params_.imuGyroDataRate  = node_.get_parameter("imuGyroDataRate").as_string();
+	params_.imuAccelFilter   = node_.get_parameter("imuAccelFilter").as_string();
+	params_.imuGyroFilter    = node_.get_parameter("imuGyroFilter").as_string();
 	if (!params_.accelerometerBias.empty() && params_.accelerometerBias.size() != 3) {
 		throw std::invalid_argument(
 			fmt::format("accelerometerBias must have exactly 3 entries [x, y, z], got {}",
@@ -126,6 +137,10 @@ void ParametersLoader::printConfiguration() {
 	RCLCPP_INFO(node_.get_logger(), "globalHold: %s", params_.globalHold ? "yes" : "no");
 	RCLCPP_INFO(node_.get_logger(), "contrastThresholdOn: %d", params_.contrastThresholdOn);
 	RCLCPP_INFO(node_.get_logger(), "contrastThresholdOff: %d", params_.contrastThresholdOff);
+	RCLCPP_INFO(node_.get_logger(), "imuAccelDataRate: %s (filter: %s)",
+		params_.imuAccelDataRate.c_str(), params_.imuAccelFilter.c_str());
+	RCLCPP_INFO(node_.get_logger(), "imuGyroDataRate:  %s (filter: %s)",
+		params_.imuGyroDataRate.c_str(), params_.imuGyroFilter.c_str());
 	if (params_.accelerometerBias.size() == 3) {
 		RCLCPP_INFO(node_.get_logger(), "accelerometerBias (m/s^2): [%+.6f, %+.6f, %+.6f]",
 			params_.accelerometerBias[0], params_.accelerometerBias[1], params_.accelerometerBias[2]);

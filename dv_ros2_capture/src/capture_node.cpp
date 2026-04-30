@@ -19,6 +19,56 @@ using namespace dv_capture_node;
 using namespace dv_ros2_msgs;
 using namespace std::chrono_literals;
 
+namespace {
+
+dv::io::camera::imu::BoschBMI160AccelDataRate parseAccelDataRate(const std::string &s) {
+	using R = dv::io::camera::imu::BoschBMI160AccelDataRate;
+	if (s == "12.5Hz") return R::RATE_12_5HZ;
+	if (s == "25Hz")   return R::RATE_25HZ;
+	if (s == "50Hz")   return R::RATE_50HZ;
+	if (s == "100Hz")  return R::RATE_100HZ;
+	if (s == "200Hz")  return R::RATE_200HZ;
+	if (s == "400Hz")  return R::RATE_400HZ;
+	if (s == "800Hz")  return R::RATE_800HZ;
+	if (s == "1600Hz") return R::RATE_1600HZ;
+	throw std::invalid_argument(fmt::format(
+		"imuAccelDataRate '{}' invalid. Use one of: 12.5Hz, 25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz", s));
+}
+
+dv::io::camera::imu::BoschBMI160GyroDataRate parseGyroDataRate(const std::string &s) {
+	using R = dv::io::camera::imu::BoschBMI160GyroDataRate;
+	if (s == "25Hz")   return R::RATE_25HZ;
+	if (s == "50Hz")   return R::RATE_50HZ;
+	if (s == "100Hz")  return R::RATE_100HZ;
+	if (s == "200Hz")  return R::RATE_200HZ;
+	if (s == "400Hz")  return R::RATE_400HZ;
+	if (s == "800Hz")  return R::RATE_800HZ;
+	if (s == "1600Hz") return R::RATE_1600HZ;
+	if (s == "3200Hz") return R::RATE_3200HZ;
+	throw std::invalid_argument(fmt::format(
+		"imuGyroDataRate '{}' invalid. Use one of: 25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz, 3200Hz", s));
+}
+
+dv::io::camera::imu::BoschBMI160AccelFilter parseAccelFilter(const std::string &s) {
+	using F = dv::io::camera::imu::BoschBMI160AccelFilter;
+	if (s == "normal") return F::FILTER_NORMAL;
+	if (s == "osr2")   return F::FILTER_OSR2;
+	if (s == "osr4")   return F::FILTER_OSR4;
+	throw std::invalid_argument(fmt::format(
+		"imuAccelFilter '{}' invalid. Use one of: normal, osr2, osr4", s));
+}
+
+dv::io::camera::imu::BoschBMI160GyroFilter parseGyroFilter(const std::string &s) {
+	using F = dv::io::camera::imu::BoschBMI160GyroFilter;
+	if (s == "normal") return F::FILTER_NORMAL;
+	if (s == "osr2")   return F::FILTER_OSR2;
+	if (s == "osr4")   return F::FILTER_OSR4;
+	throw std::invalid_argument(fmt::format(
+		"imuGyroFilter '{}' invalid. Use one of: normal, osr2, osr4", s));
+}
+
+} // namespace
+
 CaptureNode::CaptureNode(const rclcpp::NodeOptions &options) :
 	rclcpp::Node("capture_node", options) {
 	auto loadParams = dv_ros2_node::ParametersLoader(*this);
@@ -1070,6 +1120,11 @@ void CaptureNode::configureCameraHardware() {
 			dvxplorer->setDetectorRunning(mParams.triggers);
 		}
 
+		dvxplorer->setImuAccelDataRate(parseAccelDataRate(mParams.imuAccelDataRate));
+		dvxplorer->setImuGyroDataRate(parseGyroDataRate(mParams.imuGyroDataRate));
+		dvxplorer->setImuAccelFilter(parseAccelFilter(mParams.imuAccelFilter));
+		dvxplorer->setImuGyroFilter(parseGyroFilter(mParams.imuGyroFilter));
+
 		dvxplorer->setTimeInterval(std::chrono::microseconds{mParams.timeIncrement});
 		RCLCPP_INFO(this->get_logger(), "DVXplorer camera configured.");
 	}
@@ -1079,6 +1134,12 @@ void CaptureNode::configureCameraHardware() {
 		dvxplorerm->setGlobalHold(mParams.globalHold);
 		dvxplorerm->setContrastThresholdOn(static_cast<uint8_t>(mParams.contrastThresholdOn));
 		dvxplorerm->setContrastThresholdOff(static_cast<uint8_t>(mParams.contrastThresholdOff));
+
+		dvxplorerm->setImuAccelDataRate(parseAccelDataRate(mParams.imuAccelDataRate));
+		dvxplorerm->setImuGyroDataRate(parseGyroDataRate(mParams.imuGyroDataRate));
+		dvxplorerm->setImuAccelFilter(parseAccelFilter(mParams.imuAccelFilter));
+		dvxplorerm->setImuGyroFilter(parseGyroFilter(mParams.imuGyroFilter));
+
 		dvxplorerm->setTimeInterval(std::chrono::microseconds{mParams.timeIncrement});
 		RCLCPP_INFO(this->get_logger(), "DVXplorerM camera configured.");
 	}

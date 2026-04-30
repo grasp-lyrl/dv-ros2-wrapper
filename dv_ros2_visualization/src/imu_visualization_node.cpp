@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <mutex>
 
 namespace dv_visualization_node {
@@ -23,6 +24,16 @@ public:
 			"imu", rclcpp::SensorDataQoS(),
 			[this](const dv_ros2_msgs::ImuMessage::SharedPtr msg) {
 				std::lock_guard<std::mutex> lock(mutex_);
+
+				// Track receive timestamps (wall clock) over a sliding window
+				// for live rate measurement. Using receive time, not header
+				// stamp, surfaces transport hiccups too.
+				const auto now = this->now();
+				recvTimes_.push_back(now);
+				const rclcpp::Time cutoff = now - rclcpp::Duration::from_seconds(rateWindowSec_);
+				while (recvTimes_.size() > 1 && recvTimes_.front() < cutoff) {
+					recvTimes_.pop_front();
+				}
 
 				const double stamp = static_cast<double>(msg->header.stamp.sec)
 								   + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
@@ -125,12 +136,29 @@ private:
 	void render() {
 		dv_ros2_msgs::ImuMessage imu;
 		double roll, pitch, yaw;
+		double rateHz = 0.0;
 		bool have;
 		{
 			std::lock_guard<std::mutex> lock(mutex_);
 			have = haveImu_;
 			imu  = latestImu_;
 			getEuler(roll, pitch, yaw);
+
+			// Drop stale samples then compute rate as (n-1) / span. Using
+			// (n-1) instead of n is the standard fencepost fix for a sliding
+			// window: n samples define n-1 intervals.
+			if (!recvTimes_.empty()) {
+				const rclcpp::Time cutoff = this->now() - rclcpp::Duration::from_seconds(rateWindowSec_);
+				while (recvTimes_.size() > 1 && recvTimes_.front() < cutoff) {
+					recvTimes_.pop_front();
+				}
+				if (recvTimes_.size() >= 2) {
+					const double span = (recvTimes_.back() - recvTimes_.front()).seconds();
+					if (span > 0.0) {
+						rateHz = static_cast<double>(recvTimes_.size() - 1) / span;
+					}
+				}
+			}
 		}
 		if (!have) {
 			return;
@@ -148,6 +176,7 @@ private:
 		drawBars(image, cv::Rect(300, 300, 320, 160), "Gyro (rad/s)",
 				 {imu.angular_velocity.x, imu.angular_velocity.y, imu.angular_velocity.z}, 5.0);
 		drawReadouts(image, cv::Point(300, 20), roll, pitch, yaw, imu);
+		drawRate(image, cv::Point(W - 220, H - 20), rateHz);
 
 		auto msg            = dv_ros2_msgs::toRosImageMessage(image);
 		msg.header.stamp    = imu.header.stamp;
@@ -236,6 +265,13 @@ private:
 		}
 	}
 
+	static void drawRate(cv::Mat &img, const cv::Point &anchor, double rateHz) {
+		char buf[64];
+		std::snprintf(buf, sizeof(buf), "IMU rate: %6.1f Hz", rateHz);
+		cv::putText(img, buf, anchor, cv::FONT_HERSHEY_SIMPLEX, 0.6,
+					cv::Scalar(220, 220, 220), 1);
+	}
+
 	static void drawReadouts(cv::Mat &img, const cv::Point &origin, double roll, double pitch,
 							 double yaw, const dv_ros2_msgs::ImuMessage &imu) {
 		char buf[64];
@@ -262,6 +298,8 @@ private:
 	static constexpr double Kp_ = 2.0;    // proportional: convergence speed
 	static constexpr double Ki_ = 0.005;  // integral: gyro bias correction
 
+	static constexpr double rateWindowSec_ = 1.0;
+
 	rclcpp::Publisher<dv_ros2_msgs::ImageMessage>::SharedPtr framePublisher_;
 	rclcpp::Subscription<dv_ros2_msgs::ImuMessage>::SharedPtr imuSubscriber_;
 	rclcpp::TimerBase::SharedPtr renderTimer_;
@@ -270,6 +308,7 @@ private:
 	dv_ros2_msgs::ImuMessage latestImu_;
 	bool haveImu_   = false;
 	double lastStamp_ = 0.0;
+	std::deque<rclcpp::Time> recvTimes_;
 
 	// Quaternion state (body-to-world). Initialised to identity (level, facing +z).
 	double qw_ = 1.0, qx_ = 0.0, qy_ = 0.0, qz_ = 0.0;

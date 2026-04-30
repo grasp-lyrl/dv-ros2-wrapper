@@ -33,11 +33,23 @@
     waitForSync: false
     # Undistort events using the camera calibration parameters
     undistortEvents: false
+    # DVXplorer / DVXplorerM IMU (BMI160) data rate. Live cameras only — ignored
+    # when reading from an aedat4 file. The hardware delivers samples at this rate.
+    # Accelerometer: 12.5Hz, 25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz
+    imuAccelDataRate: "200Hz"
+    # Gyroscope:     25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz, 3200Hz
+    imuGyroDataRate:  "200Hz"
+    # IMU oversampling filter. Reduces noise at the cost of latency:
+    #   normal — no oversampling, lowest latency, highest noise
+    #   osr2   — 2x oversampling then decimate (medium)
+    #   osr4   — 4x oversampling then decimate (lowest noise, highest latency)
+    imuAccelFilter: "normal"
+    imuGyroFilter:  "normal"
     # Static IMU biases [x, y, z]. When non-empty (length 3), these override
     # any bias values loaded from the camera calibration file. Subtracted from
     # raw IMU samples when unbiasedImuData is true. Leave empty ([]) to fall
     # back to the calibration file. Copy-paste from a bias.json calibration:
     #   accelerometer_bias_refined_m_s2 -> accelerometerBias
     #   gyroscope_bias_rad_s            -> gyroscopeBias
-    # accelerometerBias: [0.822333771293767, -0.4204056391087951, 0.13869418012856144]
-    # gyroscopeBias:     [-0.008375375021517997, -0.0031113306658109284, -0.0039612173365261875]
+    accelerometerBias: [0.822333771293767, -0.4204056391087951, 0.13869418012856144]
+    gyroscopeBias:     [-0.008375375021517997, -0.0031113306658109284, -0.0039612173365261875]

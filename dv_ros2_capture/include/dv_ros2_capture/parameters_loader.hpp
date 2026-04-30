@@ -39,6 +39,16 @@ struct Params {
 	int contrastThresholdOn  = 9;
 	int contrastThresholdOff = 9;
 
+	// DVXplorer/DVXplorerM IMU (BMI160) data rate and filter (oversampling).
+	// Rate strings: accel ∈ {12.5Hz, 25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz}
+	//               gyro  ∈ {25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz, 3200Hz}
+	// Filter strings: {normal, osr2, osr4}. OSR{2,4} oversample then decimate
+	// internally for lower noise at the cost of latency.
+	std::string imuAccelDataRate = "800Hz";
+	std::string imuGyroDataRate  = "800Hz";
+	std::string imuAccelFilter   = "normal";
+	std::string imuGyroFilter    = "normal";
+
 	// Static IMU bias overrides. Empty = fall back to calibration file values.
 	// Order: [x, y, z]. Accel in m/s^2, gyro in rad/s. These are the values
 	// that get *subtracted* from raw IMU samples when unbiasedImuData is true.

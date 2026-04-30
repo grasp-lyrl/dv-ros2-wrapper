@@ -23,9 +23,9 @@ Clone the repository and build:
 
 ```bash
 mkdir -p ~/dv_ws/src && cd ~/dv_ws/src
-git clone git@github.com:grasp-lyrl/neurofly.git
+git clone git@github.com:grasp-lyrl/dv-ros2-wrapper.git
 cd ~/dv_ws
-rosdep install --from-paths src/neurofly/dv-ros2-wrapper --ignore-src -r -y
+rosdep install --from-paths src/dv-ros2-wrapper --ignore-src -r -y
 colcon build --symlink-install --parallel-workers 4 \
              --cmake-args -DCMAKE_BUILD_TYPE=Release \
                           -DCMAKE_C_COMPILER=gcc-13 \
