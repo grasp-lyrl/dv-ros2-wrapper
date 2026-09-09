@@ -1,0 +1,11 @@
+defaults:
+  # `header` uses the message header stamp, `bag` the receive time.
+  time_source: header
+
+topics:
+  /events: events
+  /imu: imu
+  /neurofly1/control_odom: vicon_odom
+  /neurofly1/zed_node/odom: zed_odom
+  /neurofly1/zed_node/left/image_rect_color: images/zed_rgb
+  /flow/rgb: images/flow_rgb

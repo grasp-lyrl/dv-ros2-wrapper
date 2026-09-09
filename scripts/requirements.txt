@@ -1,0 +1,16 @@
+# Dependencies for dv_ros2_bag_to_h5.py
+#
+#   pip install -r requirements.txt
+#
+# Deliberately does NOT need rclpy / rosbag2_py: rosbags is pure Python, so a
+# bag can be converted without sourcing a ROS environment. Custom message
+# definitions are read from .msg files or from the bag itself.
+
+rosbags>=0.10          # bag reading + CDR deserialisation (needs Python >= 3.10)
+h5py>=3.0              # HDF5 output
+numpy>=1.20
+
+# Optional:
+PyYAML>=5.4            # only needed for --config
+# opencv-python        # only to decode sensor_msgs/CompressedImage into frames;
+                       # without it those messages are stored as raw blobs
