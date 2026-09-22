@@ -22,7 +22,7 @@ public:
 
 		imuSubscriber_ = this->create_subscription<dv_ros2_msgs::ImuMessage>(
 			"imu", rclcpp::SensorDataQoS(),
-			[this](const dv_ros2_msgs::ImuMessage::SharedPtr msg) {
+			[this](const dv_ros2_msgs::ImuMessage::ConstSharedPtr &msg) {
 				std::lock_guard<std::mutex> lock(mutex_);
 
 				// Track receive timestamps (wall clock) over a sliding window

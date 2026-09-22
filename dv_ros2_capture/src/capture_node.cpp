@@ -740,8 +740,8 @@ void CaptureNode::framePublisher() {
 			}
 			while (frame.has_value() && timestamp >= frame->timestamp) {
 				if (mFramePublisher->get_subscription_count() > 0) {
-					ImageMessage msg = dv_ros2_msgs::frameToRosImageMessage(*frame);
-					mFramePublisher->publish(msg);
+					mFramePublisher->publish(
+						std::make_unique<ImageMessage>(dv_ros2_msgs::frameToRosImageMessage(*frame)));
 				}
 
 				mCurrentSeek = frame->timestamp;
@@ -769,7 +769,8 @@ void CaptureNode::imuPublisher() {
 				if (mImuPublisher->get_subscription_count() > 0) {
 					for (auto &imu : *imuData) {
 						imu.timestamp += mImuTimeOffset;
-						mImuPublisher->publish(transformImuFrame(dv_ros2_msgs::toRosImuMessage(imu)));
+						mImuPublisher->publish(
+							std::make_unique<ImuMessage>(transformImuFrame(dv_ros2_msgs::toRosImuMessage(imu))));
 					}
 				}
 
@@ -802,7 +803,8 @@ void CaptureNode::triggerPublisher() {
 			while (triggerData.has_value() && !triggerData->empty() && timestamp >= triggerData->back().timestamp) {
 				if (mTriggerPublisher->get_subscription_count() > 0) {
 					for (const auto &trigger : *triggerData) {
-						mTriggerPublisher->publish(dv_ros2_msgs::toRosTriggerMessage(trigger));
+						mTriggerPublisher->publish(
+							std::make_unique<TriggerMessage>(dv_ros2_msgs::toRosTriggerMessage(trigger)));
 					}
 				}
 
@@ -845,14 +847,12 @@ void CaptureNode::eventsPublisher() {
 				}
 
 				if (mParams.undistortEvents) {
-                    auto start_time = std::chrono::high_resolution_clock::now();
 					store = undistortEvents(store);
-                    auto end_time = std::chrono::high_resolution_clock::now();
 				}
 
 				if (mEventArrayPublisher->get_subscription_count() > 0) {
-					auto msg = dv_ros2_msgs::toRosEventsMessage(store, resolution);
-					mEventArrayPublisher->publish(msg);
+					mEventArrayPublisher->publish(
+						std::make_unique<EventArrayMessage>(dv_ros2_msgs::toRosEventsMessage(store, resolution)));
 				}
 
 				mCurrentSeek = events->getHighestTime();

@@ -26,7 +26,9 @@ def generate_launch_description():
             name='dv_container',
             namespace='',
             package='rclcpp_components',
-            executable='component_container',
+            # Multi-threaded: the 1 kHz event callback should not share one executor
+            # thread with everything else in the container.
+            executable='component_container_mt',
             composable_node_descriptions=[
                 ComposableNode(
                     package='dv_ros2_capture',
