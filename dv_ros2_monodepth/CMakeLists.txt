@@ -53,6 +53,8 @@ if(NOT DEFINED CMAKE_CUDA_COMPILER)
 endif()
 
 find_package(Torch REQUIRED)
+# For cudaSetDeviceFlags: the node picks the driver's GPU-wait strategy explicitly.
+find_package(CUDAToolkit REQUIRED)
 
 include_directories(include ${OpenCV_INCLUDE_DIRS})
 
@@ -66,6 +68,7 @@ target_link_libraries(monodepth_node_component
   dv::processing
   ${OpenCV_LIBS}
   ${TORCH_LIBRARIES}
+  CUDA::cudart
 )
 
 rclcpp_components_register_nodes(monodepth_node_component "dv_monodepth_node::MonoDepthNode")

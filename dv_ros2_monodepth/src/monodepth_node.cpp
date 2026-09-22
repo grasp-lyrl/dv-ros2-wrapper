@@ -1,5 +1,7 @@
 #include "dv_ros2_monodepth/monodepth_node.hpp"
 
+#include <cuda_runtime.h>
+
 #include <opencv2/imgproc.hpp>
 
 #include <rclcpp_components/register_node_macro.hpp>
@@ -98,6 +100,16 @@ void MonoDepthNode::readParameters() {
 }
 
 void MonoDepthNode::setupInference() {
+	// Ask the driver to sleep on GPU waits rather than spin. The default spins, and since
+	// the inference thread blocks on the device-to-host read until the whole model has
+	// run, that burned a core per ~13 ms of inference doing nothing. This has to happen
+	// before anything creates the CUDA context, so it sits ahead of the torch call below.
+	if (const cudaError_t status = cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+		status != cudaSuccess) {
+		RCLCPP_WARN(this->get_logger(), "Could not select blocking GPU waits (%s); the "
+			"inference thread will spin while the model runs.", cudaGetErrorString(status));
+	}
+
 	if (!torch::cuda::is_available()) {
 		throw std::runtime_error("CUDA is not available; the AOTI package is compiled for the GPU");
 	}
