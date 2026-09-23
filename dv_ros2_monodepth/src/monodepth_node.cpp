@@ -41,6 +41,24 @@ MonoDepthNode::MonoDepthNode(const rclcpp::NodeOptions &options) : rclcpp::Node(
 			= this->create_publisher<sensor_msgs::msg::Image>("disparity_image", rclcpp::SensorDataQoS());
 	}
 
+	// The preview range can be retuned live with `ros2 param set`, since what reads well
+	// depends on the scene and the checkpoint.
+	mDisparityMin  = mParams.disparityMin;
+	mDisparityMax  = mParams.disparityMax;
+	mParamCallback = this->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &params) {
+		for (const auto &param : params) {
+			if (param.get_name() == "disparity_min") {
+				mDisparityMin = param.as_double();
+			}
+			else if (param.get_name() == "disparity_max") {
+				mDisparityMax = param.as_double();
+			}
+		}
+		rcl_interfaces::msg::SetParametersResult result;
+		result.successful = true;
+		return result;
+	});
+
 	// Best effort: the event stream is a sensor feed, and a window we could not keep up
 	// with is worth less than the one behind it.
 	mEventSubscriber = this->create_subscription<dv_ros2_msgs::EventArrayMessage>(
@@ -84,6 +102,8 @@ void MonoDepthNode::readParameters() {
 	mParams.maxEvents            = this->declare_parameter("max_events", mParams.maxEvents);
 	mParams.deviceId             = this->declare_parameter("device_id", mParams.deviceId);
 	mParams.publishVisualization = this->declare_parameter("publish_visualization", mParams.publishVisualization);
+	mParams.disparityMin         = this->declare_parameter("disparity_min", mParams.disparityMin);
+	mParams.disparityMax         = this->declare_parameter("disparity_max", mParams.disparityMax);
 
 	if (mParams.modelPath.empty()) {
 		throw std::invalid_argument("model_path is required: point it at the .pt2 from export_f3_aoti.py");
@@ -326,11 +346,14 @@ void MonoDepthNode::publishDisparity(
 		const cv::Mat raw(static_cast<int>(height), static_cast<int>(width), CV_32FC1,
 			const_cast<float *>(host.data_ptr<float>()));
 
-		// Same per-frame normalization the training previews use, so a preview here and a
-		// preview there are read the same way.
-		double low  = 0.0;
-		double high = 0.0;
-		cv::minMaxLoc(raw, &low, &high);
+		// A fixed range, so a colour means the same disparity from one frame to the next.
+		// Normalizing each frame on its own, as the training previews do, makes the whole
+		// colormap jump whenever the nearest surface changes.
+		double low  = mDisparityMin.load(std::memory_order_relaxed);
+		double high = mDisparityMax.load(std::memory_order_relaxed);
+		if (high <= low) {
+			cv::minMaxLoc(raw, &low, &high);
+		}
 		const double span = (high - low) > 1e-9 ? (high - low) : 1.0;
 
 		cv::Mat normalized;

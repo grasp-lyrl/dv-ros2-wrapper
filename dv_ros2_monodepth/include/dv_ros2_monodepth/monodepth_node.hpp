@@ -45,6 +45,11 @@ struct Params {
 	/// Also publish a colourized preview. Costs a colormap per frame, and is skipped
 	/// anyway when nothing subscribes to it.
 	bool publishVisualization = true;
+	/// Disparity mapped to the two ends of the preview colormap, so a colour means the same
+	/// thing from frame to frame; values outside saturate. The default covers the model's
+	/// output on the treehouse bags. With max <= min, each frame is normalized on its own.
+	double disparityMin = 0.0;
+	double disparityMax = 2.5;
 };
 
 /**
@@ -105,6 +110,11 @@ private:
 	rclcpp::Subscription<dv_ros2_msgs::EventArrayMessage>::SharedPtr mEventSubscriber;
 	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mDisparityPublisher;
 	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mVisualizationPublisher;
+
+	/// Preview range, retunable at runtime and read from the inference thread.
+	std::atomic<double> mDisparityMin = 0.0;
+	std::atomic<double> mDisparityMax = 2.5;
+	rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr mParamCallback;
 
 	dv::EventStreamSlicer mSlicer;
 	std::optional<int> mJobId;
