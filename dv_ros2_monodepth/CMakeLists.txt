@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 project(dv_ros2_monodepth VERSION 1.3.0)
 
-# dv-processing needs C++20; Torch is happy to be built against it.
+# dv-processing needs C++20.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -15,8 +15,7 @@ find_package(dv_ros2_messaging REQUIRED)
 find_package(dv-processing 2.0.0 REQUIRED)
 find_package(OpenCV REQUIRED)
 
-# Torch ships its CMake config inside the python package on both the Orin wheel and a
-# conda install, so ask python where it is unless the caller already pointed us at one.
+# Find Torch's CMake config through python unless Torch_DIR is given.
 if(NOT DEFINED Torch_DIR)
   execute_process(
     COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
@@ -31,17 +30,13 @@ if(NOT DEFINED Torch_DIR)
   endif()
   list(APPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PREFIX_PATH}")
 endif()
-# Caffe2Config resolves nvcc gencode flags before it will load, and its GPU
-# auto-detection compiles and runs a probe -- which fails in a container that has the
-# CUDA libraries but not a full toolchain. Nothing here compiles CUDA, so the value only
-# has to exist. 8.7 is the Orin, 8.9 is Ada; override the env var for anything else.
+# Caffe2Config needs an arch list, and its auto-detection fails without a full CUDA
+# toolchain. Nothing here compiles CUDA. 8.7 is the Orin, 8.9 Ada.
 if(NOT DEFINED ENV{TORCH_CUDA_ARCH_LIST})
   set(ENV{TORCH_CUDA_ARCH_LIST} "8.7;8.9")
 endif()
 
-# Caffe2Config enables the CUDA language before it will load, so nvcc has to be findable
-# even though nothing here compiles CUDA. Locate it ourselves rather than depending on
-# whatever PATH the build was invoked with.
+# Caffe2Config enables the CUDA language, so nvcc must be findable regardless of PATH.
 if(NOT DEFINED CMAKE_CUDA_COMPILER)
   find_program(NVCC_EXECUTABLE nvcc
     HINTS ${CUDAToolkit_ROOT} $ENV{CUDA_HOME} /usr/local/cuda /usr/local/cuda-12.8
@@ -53,7 +48,7 @@ if(NOT DEFINED CMAKE_CUDA_COMPILER)
 endif()
 
 find_package(Torch REQUIRED)
-# For cudaSetDeviceFlags: the node picks the driver's GPU-wait strategy explicitly.
+# For cudaSetDeviceFlags.
 find_package(CUDAToolkit REQUIRED)
 
 include_directories(include ${OpenCV_INCLUDE_DIRS})

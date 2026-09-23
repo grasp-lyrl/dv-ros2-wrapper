@@ -16,9 +16,7 @@ public:
 		using namespace std::chrono_literals;
 		framePublisher_ = this->create_publisher<dv_ros2_msgs::ImageMessage>("image", 10);
 
-		// ConstSharedPtr, not SharedPtr: a mutable pointer marks this subscriber as taking
-		// ownership, and rclcpp then copies the message for every such subscriber but the
-		// last. Const subscribers share a single buffer however many there are.
+		// ConstSharedPtr lets subscribers share one intra-process buffer instead of copying.
 		eventSubscriber_ = this->create_subscription<dv_ros2_msgs::EventArrayMessage>(
 			"events", 200,
 			[this](const dv_ros2_msgs::EventArrayMessage::ConstSharedPtr &events) {

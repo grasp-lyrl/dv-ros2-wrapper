@@ -31,8 +31,7 @@ def generate_launch_description():
             name='dv_container',
             namespace='',
             package='rclcpp_components',
-            # Multi-threaded: the 1 kHz event callback should not share one executor
-            # thread with everything else in the container.
+            # Multi-threaded, so the 1 kHz event callback doesn't block the other nodes.
             executable='component_container_mt',
             composable_node_descriptions=[
                 ComposableNode(

@@ -22,44 +22,28 @@
 
 namespace dv_monodepth_node {
 
-/**
- * Parameters, all settable from the component's ROS2 parameters.
- */
+/// Node parameters, all settable as ROS2 parameters.
 struct Params {
-	/// Event stream to subscribe to.
 	std::string inputTopic = "events";
-	/// AOTI package (.pt2) exported by neurosim's `scripts/export_f3_aoti.py --module depth`.
+	/// AOTI package (.pt2) from neurosim's `scripts/export_f3_aoti.py --module depth`.
 	std::string modelPath = "";
-	/// Accumulation window. Must equal the `T` the model was trained and exported with,
-	/// since the age column is normalized by it.
-	int windowMs = 50;
-	/// Sensor resolution the model expects; the DVXplorer Micro and F3 both use 640x480.
+	/// Must match the `T` the model was exported with.
+	int windowMs     = 50;
 	int sensorWidth  = 640;
 	int sensorHeight = 480;
-	/// Upper bound on events handed to the model in one window. 0 keeps every event.
-	/// The export marks the event count dynamic, so this is a throughput knob for
-	/// smaller hardware rather than a requirement.
-	int maxEvents = 0;
-	/// CUDA device index.
-	int deviceId = 0;
-	/// Also publish a colourized preview. Costs a colormap per frame, and is skipped
-	/// anyway when nothing subscribes to it.
+	/// Decimate windows above this many events; 0 keeps them all.
+	int maxEvents             = 0;
+	int deviceId              = 0;
 	bool publishVisualization = true;
-	/// Disparity mapped to the two ends of the preview colormap, so a colour means the same
-	/// thing from frame to frame; values outside saturate. The default covers the model's
-	/// output on the treehouse bags. With max <= min, each frame is normalized on its own.
+	/// Disparity range of the preview colormap; with max <= min each frame is normalized alone.
 	double disparityMin = 0.0;
 	double disparityMax = 2.5;
 };
 
 /**
- * Turns an event stream into monocular disparity using a single fused F3 + DepthAnythingV2
- * AOTI package.
- *
- * The event topic delivers roughly a thousand messages a second while the network runs at
- * a few tens of hertz, so the subscription callback only accumulates into a slicer and the
- * network runs on its own thread, fed by a latest-value slot that drops whatever inference
- * could not keep up with.
+ * Monocular disparity from an event stream, using a fused F3 + DepthAnythingV2 AOTI package.
+ * Events are sliced into windows on the executor thread; inference runs on its own thread,
+ * always on the newest window.
  */
 class MonoDepthNode : public rclcpp::Node {
 public:
@@ -73,35 +57,26 @@ public:
 	[[nodiscard]] bool isRunning() const;
 
 private:
-	/// Read and validate parameters into mParams.
 	void readParameters();
 
-	/// Allocate the pinned staging and device buffers, and load the AOTI package.
+	/// Allocate the event buffers and load the AOTI package.
 	void setupInference();
 
-	/// Grow the staging and device buffers if this window needs more rows than they hold.
+	/// Grow the event buffers to hold at least `rows` events.
 	void ensureCapacity(int64_t rows);
 
-	/// Subscription callback. Runs on the executor thread ~1 kHz, so it only converts
-	/// and accumulates.
 	void eventCallback(const dv_ros2_msgs::EventArrayMessage::ConstSharedPtr &events);
 
-	/// Slicer callback, once per window. Hands the window to the inference thread.
+	/// Hands a completed window to the inference thread.
 	void windowCallback(const dv::EventStore &events);
 
-	/// Inference thread body.
 	void inferenceLoop();
 
-	/**
-	 * Pack an event window into the pinned staging buffer in the layout the model was
-	 * trained on, and copy it to the device.
-	 * @return A view of the device buffer holding exactly the packed rows.
-	 */
+	/// Pack a window into the model's input layout and copy it to the device.
 	[[nodiscard]] torch::Tensor packEvents(const dv::EventStore &events);
 
-	/// Publish disparity as 32FC1, and optionally a colourized preview. At least one of
-	/// the two flags must be set: the device-to-host read is what waits on the copies
-	/// queued in packEvents, so the staging buffers are only safe to reuse afterwards.
+	/// Publish disparity and/or its preview. At least one must be requested: the readback is
+	/// what syncs the input copies packEvents queued.
 	void publishDisparity(const torch::Tensor &disparity, int64_t timestamp, bool wantDisparity,
 		bool wantPreview);
 
@@ -111,7 +86,7 @@ private:
 	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mDisparityPublisher;
 	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mVisualizationPublisher;
 
-	/// Preview range, retunable at runtime and read from the inference thread.
+	/// Preview range, retunable live through parameters.
 	std::atomic<double> mDisparityMin = 0.0;
 	std::atomic<double> mDisparityMax = 2.5;
 	rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr mParamCallback;
@@ -119,7 +94,6 @@ private:
 	dv::EventStreamSlicer mSlicer;
 	std::optional<int> mJobId;
 
-	/// Newest complete window awaiting inference; older ones are dropped here.
 	LatestValue<dv::EventStore> mPendingWindow;
 
 	std::thread mInferenceThread;
@@ -127,15 +101,12 @@ private:
 
 	std::optional<torch::inductor::AOTIModelPackageLoader> mModel;
 
-	/// Page-locked host staging, allocated once at capacity and narrowed per window.
+	/// Pinned host and device event buffers, preallocated and narrowed per window.
 	torch::Tensor mHostEvents;
-	/// Device-side event buffer, likewise narrowed per window.
 	torch::Tensor mDeviceEvents;
-	/// The [1] int32 event count the model takes alongside the events.
+	/// The model's [1] int32 event-count input.
 	torch::Tensor mHostCounts;
 	torch::Tensor mDeviceCounts;
-
-	/// Rows the preallocated buffers can hold.
 	int64_t mCapacity = 0;
 
 	int64_t mWindowUs    = 0;
@@ -144,7 +115,7 @@ private:
 
 	std::optional<torch::Device> mDevice;
 
-	// Rolling throughput accounting, reported from the inference thread every few seconds.
+	// Throughput stats, logged periodically.
 	std::chrono::steady_clock::time_point mLastReport;
 	double mFramesDone = 0.0;
 	double mPackMs     = 0.0;

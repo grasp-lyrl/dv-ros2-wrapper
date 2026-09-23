@@ -14,12 +14,10 @@ using namespace std::chrono_literals;
 namespace dv_monodepth_node {
 
 namespace {
-/// Rows to allocate before the first window arrives. Grown on demand, so this only
-/// decides whether the first few windows reallocate.
+/// Initial event-buffer capacity; grown on demand.
 constexpr int64_t kInitialCapacity = 512 * 1024;
 
-/// How long the inference thread sleeps when no window is ready. Windows arrive every
-/// `windowMs`, so this bounds the handoff delay at a small fraction of one window.
+/// Poll interval while the inference thread waits for a window.
 constexpr auto kIdlePoll = 1ms;
 } // namespace
 
@@ -32,8 +30,7 @@ MonoDepthNode::MonoDepthNode(const rclcpp::NodeOptions &options) : rclcpp::Node(
 
 	setupInference();
 
-	// Best effort on the way out as well: a consumer that cannot keep up should miss
-	// frames rather than hold the inference thread back.
+	// Best effort, so a slow consumer drops frames instead of stalling inference.
 	mDisparityPublisher
 		= this->create_publisher<sensor_msgs::msg::Image>("disparity", rclcpp::SensorDataQoS());
 	if (mParams.publishVisualization) {
@@ -41,8 +38,6 @@ MonoDepthNode::MonoDepthNode(const rclcpp::NodeOptions &options) : rclcpp::Node(
 			= this->create_publisher<sensor_msgs::msg::Image>("disparity_image", rclcpp::SensorDataQoS());
 	}
 
-	// The preview range can be retuned live with `ros2 param set`, since what reads well
-	// depends on the scene and the checkpoint.
 	mDisparityMin  = mParams.disparityMin;
 	mDisparityMax  = mParams.disparityMax;
 	mParamCallback = this->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &params) {
@@ -59,8 +54,7 @@ MonoDepthNode::MonoDepthNode(const rclcpp::NodeOptions &options) : rclcpp::Node(
 		return result;
 	});
 
-	// Best effort: the event stream is a sensor feed, and a window we could not keep up
-	// with is worth less than the one behind it.
+	// Best effort: a late event batch is worth less than a fresh one.
 	mEventSubscriber = this->create_subscription<dv_ros2_msgs::EventArrayMessage>(
 		mParams.inputTopic, rclcpp::SensorDataQoS(),
 		[this](const dv_ros2_msgs::EventArrayMessage::ConstSharedPtr &events) {
@@ -120,10 +114,8 @@ void MonoDepthNode::readParameters() {
 }
 
 void MonoDepthNode::setupInference() {
-	// Ask the driver to sleep on GPU waits rather than spin. The default spins, and since
-	// the inference thread blocks on the device-to-host read until the whole model has
-	// run, that burned a core per ~13 ms of inference doing nothing. This has to happen
-	// before anything creates the CUDA context, so it sits ahead of the torch call below.
+	// Sleep instead of spinning on GPU waits, which otherwise burns a core. Must precede
+	// CUDA context creation.
 	if (const cudaError_t status = cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
 		status != cudaSuccess) {
 		RCLCPP_WARN(this->get_logger(), "Could not select blocking GPU waits (%s); the "
@@ -143,9 +135,7 @@ void MonoDepthNode::setupInference() {
 
 	RCLCPP_INFO(this->get_logger(), "Loading AOTI package [%s]...", mParams.modelPath.c_str());
 	const auto start = std::chrono::steady_clock::now();
-	// Exactly one thread ever calls run(), so the runner can skip its own locking. The
-	// device is selected here rather than by setting a current device, which keeps this
-	// thread-agnostic.
+	// Only the inference thread calls run(), so the runner can skip its locking.
 	mModel.emplace(mParams.modelPath, "model", /*run_single_threaded=*/true, /*num_runners=*/1,
 		static_cast<c10::DeviceIndex>(mParams.deviceId));
 	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -157,8 +147,7 @@ void MonoDepthNode::ensureCapacity(int64_t rows) {
 	if (rows <= mCapacity) {
 		return;
 	}
-	// Half again, so a steadily rising event rate stops reallocating instead of doing it
-	// on every window.
+	// 1.5x headroom so a rising event rate doesn't reallocate every window.
 	const int64_t capacity = rows + rows / 2;
 	mHostEvents            = torch::empty({capacity, 4},
         torch::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
@@ -186,7 +175,6 @@ void MonoDepthNode::windowCallback(const dv::EventStore &events) {
 }
 
 void MonoDepthNode::inferenceLoop() {
-	// No autograd bookkeeping anywhere on this thread.
 	c10::InferenceMode guard;
 
 	dv::EventStore window;
@@ -196,16 +184,13 @@ void MonoDepthNode::inferenceLoop() {
 			std::this_thread::sleep_for(kIdlePoll);
 			continue;
 		}
-		// The export declares the event count dynamic with a floor of two, so a window
-		// that quiet has no valid shape to run at.
+		// The export's dynamic event count has a minimum of 2.
 		if (window.size() < 2) {
 			continue;
 		}
 
-		// Decide once, and skip the GPU entirely when nothing is listening. This also
-		// keeps the pinned staging buffer safe: the only thing that waits on the copies
-		// queued in packEvents is the device-to-host read below, so a window that
-		// produced no output must not run at all.
+		// Skip inference with no subscribers. The readback is also what makes reusing the
+		// staging buffer safe, so a window must never run without one.
 		const bool wantDisparity = mDisparityPublisher->get_subscription_count() > 0;
 		const bool wantPreview
 			= mVisualizationPublisher != nullptr && mVisualizationPublisher->get_subscription_count() > 0;
@@ -214,8 +199,6 @@ void MonoDepthNode::inferenceLoop() {
 		}
 
 		try {
-			// The window is anchored on its newest event, which is the instant the
-			// disparity describes.
 			const int64_t timestamp = window.getHighestTime();
 
 			const auto packStart = std::chrono::steady_clock::now();
@@ -227,8 +210,7 @@ void MonoDepthNode::inferenceLoop() {
 				RCLCPP_ERROR(this->get_logger(), "Model returned no outputs.");
 				continue;
 			}
-			// The device-to-host read inside this is what the queued work is waited on,
-			// so the clock after it covers the model end to end.
+			// Includes the readback, so this times the model end to end.
 			publishDisparity(outputs.front(), timestamp, wantDisparity, wantPreview);
 			const auto done = std::chrono::steady_clock::now();
 
@@ -262,18 +244,13 @@ void MonoDepthNode::inferenceLoop() {
 
 torch::Tensor MonoDepthNode::packEvents(const dv::EventStore &events) {
 	const int64_t total = static_cast<int64_t>(events.size());
-	// The export marks the event count dynamic, so by default every event goes to the
-	// model. `max_events` decimates with a stride rather than truncating, which keeps the
-	// window's age distribution intact -- and age is the only temporal signal the model
-	// gets.
+	// Decimate by stride rather than truncating, to keep the age distribution intact.
 	const bool decimate = mParams.maxEvents > 0 && total > static_cast<int64_t>(mParams.maxEvents);
 	const int64_t kept  = decimate ? static_cast<int64_t>(mParams.maxEvents) : total;
 
 	ensureCapacity(kept);
 
-	// Age, not elapsed time: the training loader writes (t_anchor - t) / window, so the
-	// newest event in a window is 0 and the oldest approaches 1. Feeding forward time
-	// here reverses the field the model was trained on.
+	// Age, not elapsed time: the model was trained on (t_anchor - t) / window, newest = 0.
 	const int64_t anchor       = events.getHighestTime();
 	const float inverseWindow  = 1.0f / static_cast<float>(mWindowUs);
 	float *const rows          = mHostEvents.data_ptr<float>();
@@ -301,9 +278,7 @@ torch::Tensor MonoDepthNode::packEvents(const dv::EventStore &events) {
 		}
 	}
 
-	// Page-locked source, so this overlaps instead of staging through a driver bounce
-	// buffer. The model run that follows is queued on the same stream, which orders it
-	// after the copy.
+	// Async copy from pinned memory; the model runs on the same stream, after it.
 	auto host   = mHostEvents.narrow(0, 0, kept);
 	auto device = mDeviceEvents.narrow(0, 0, kept);
 	device.copy_(host, /*non_blocking=*/true);
@@ -332,8 +307,7 @@ void MonoDepthNode::publishDisparity(
 		message->step         = static_cast<uint32_t>(width * sizeof(float));
 		message->data.resize(static_cast<size_t>(message->step) * static_cast<size_t>(height));
 
-		// Copy off the device straight into the message's storage, so the frame is not
-		// staged through a temporary on the way out.
+		// Copy straight into the message buffer.
 		auto destination = torch::from_blob(message->data.data(), {height, width},
 			torch::TensorOptions().dtype(torch::kFloat32));
 		destination.copy_(frame);
@@ -346,9 +320,7 @@ void MonoDepthNode::publishDisparity(
 		const cv::Mat raw(static_cast<int>(height), static_cast<int>(width), CV_32FC1,
 			const_cast<float *>(host.data_ptr<float>()));
 
-		// A fixed range, so a colour means the same disparity from one frame to the next.
-		// Normalizing each frame on its own, as the training previews do, makes the whole
-		// colormap jump whenever the nearest surface changes.
+		// Fixed range, so a colour means the same disparity across frames.
 		double low  = mDisparityMin.load(std::memory_order_relaxed);
 		double high = mDisparityMax.load(std::memory_order_relaxed);
 		if (high <= low) {

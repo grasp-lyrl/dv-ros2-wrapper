@@ -34,7 +34,6 @@ def generate_launch_description():
     default_calib = os.path.join(capture_config, 'calib_80deg.xml')
 
     undistort = LaunchConfiguration('undistort_events')
-    # With undistortion on, everything downstream reads the rectified stream instead.
     stream = PythonExpression([
         "'/events_undistorted' if '", undistort, "'.lower() == 'true' else '",
         LaunchConfiguration('events_topic'), "'"])
@@ -45,8 +44,7 @@ def generate_launch_description():
             name='dv_container', namespace='', package='rclcpp_components',
             executable='component_container_mt',
             composable_node_descriptions=[
-                # The bag path has no capture node, so this does the capture node's
-                # undistortion, with the same calibration and lookup.
+                # Stands in for the capture node's undistortion, which bags bypass.
                 ComposableNode(
                     condition=IfCondition(undistort),
                     package='dv_ros2_capture', plugin='dv_capture_node::EventUndistortNode',
@@ -79,8 +77,7 @@ def generate_launch_description():
             ],
             output='screen'))
 
-    # Held back a few seconds so the model has loaded and run its first (slow) pass before
-    # events arrive. The override is what makes the replayed topics visible at all.
+    # Delayed so the model is loaded and warm before events arrive.
     ld.add_action(TimerAction(period=4.0, actions=[
         ExecuteProcess(
             cmd=['ros2', 'bag', 'play', LaunchConfiguration('bag'),

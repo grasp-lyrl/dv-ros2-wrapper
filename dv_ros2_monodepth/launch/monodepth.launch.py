@@ -34,8 +34,7 @@ def generate_launch_description():
             name='dv_container',
             namespace='',
             package='rclcpp_components',
-            # Multi-threaded: the 1 kHz event callback and the depth publisher should not
-            # take turns on one executor thread.
+            # Multi-threaded, so the 1 kHz event callback doesn't block depth.
             executable='component_container_mt',
             composable_node_descriptions=[
                 ComposableNode(
@@ -43,8 +42,6 @@ def generate_launch_description():
                     plugin='dv_capture_node::CaptureNode',
                     name='capture_node',
                     parameters=[settings_file, dynamic_file, {
-                        # Events are undistorted before publishing, so every consumer
-                        # downstream sees a rectified stream.
                         'undistortEvents': LaunchConfiguration('undistort_events'),
                         'opencvCalibrationFilePath': PythonExpression(
                             ["'", LaunchConfiguration('calibration_file'), "' or '", default_calib, "'"]),
