@@ -1,0 +1,19 @@
+# The neurofly bags record avoid_ros_namespace_conventions: true in their offered QoS, and
+# `ros2 bag play` reproduces it. That puts the replayed publishers outside ROS naming, where
+# no ordinary subscriber (or `ros2 topic list`) can see them. Overriding the profile drops
+# the flag; everything else matches what was recorded.
+/neurofly1/events:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/neurofly1/imu:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/neurofly1/mavros/distance_sensor:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
