@@ -215,7 +215,7 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &options) :
 		}
 	}
 
-	// An OpenCV calibration, if given, replaces whatever intrinsics we just settled on.
+	// An OpenCV calibration overrides the intrinsics loaded above.
 	if (!mParams.opencvCalibrationFilePath.empty()) {
 		loadOpenCvCalibration(mParams.opencvCalibrationFilePath);
 	}
@@ -291,47 +291,13 @@ void CaptureNode::populateInfoMsg(const dv::camera::CameraGeometry &cameraGeomet
 }
 
 void CaptureNode::loadOpenCvCalibration(const fs::path &path) {
-	if (!fs::exists(path)) {
-		throw dv::exceptions::InvalidArgument<std::string>(
-			"OpenCV calibration file does not exist!", path.string());
-	}
+	const auto calibration = readOpenCvCalibration(path);
+	const cv::Mat &K       = calibration.cameraMatrix;
+	const cv::Mat &D       = calibration.distortion;
+	int width              = calibration.resolution.width;
+	int height             = calibration.resolution.height;
 
-	cv::FileStorage store(path.string(), cv::FileStorage::READ);
-	if (!store.isOpened()) {
-		throw dv::exceptions::InvalidArgument<std::string>("Cannot read OpenCV calibration!", path.string());
-	}
-
-	// The intrinsics sit under a node named for the camera serial, so find it by content
-	// rather than by name -- the serial in the file need not match this camera.
-	cv::FileNode camera;
-	for (const auto &node : store.root()) {
-		if (node.isMap() && !node["camera_matrix"].empty()) {
-			camera = node;
-			break;
-		}
-	}
-	if (camera.empty()) {
-		throw dv::exceptions::InvalidArgument<std::string>(
-			"No node with a camera_matrix in OpenCV calibration!", path.string());
-	}
-
-	cv::Mat K;
-	cv::Mat D;
-	camera["camera_matrix"] >> K;
-	camera["distortion_coefficients"] >> D;
-	if (K.total() != 9 || D.empty()) {
-		throw dv::exceptions::InvalidArgument<std::string>(
-			"OpenCV calibration lacks a 3x3 camera_matrix or distortion_coefficients!", path.string());
-	}
-	K.convertTo(K, CV_64F);
-	D.convertTo(D, CV_64F);
-
-	int width  = 0;
-	int height = 0;
-	camera["image_width"] >> width;
-	camera["image_height"] >> height;
-
-	// Fall back to the sensor's own resolution when the file does not carry one.
+	// Fall back to the sensor resolution if the file has none.
 	if (width <= 0 || height <= 0) {
 		const auto resolution = mReader->isEventStreamAvailable() ? mReader->getEventResolution()
 																  : mReader->getFrameResolution();
@@ -349,8 +315,7 @@ void CaptureNode::loadOpenCvCalibration(const fs::path &path) {
 			width, height, sensor->width, sensor->height);
 	}
 
-	const auto fisheyeNode  = store["use_fisheye_model"];
-	const bool isFisheye    = !fisheyeNode.empty() && static_cast<int>(fisheyeNode) != 0;
+	const bool isFisheye = calibration.fisheye;
 
 	mCameraInfoMsg.width            = static_cast<uint32_t>(width);
 	mCameraInfoMsg.height           = static_cast<uint32_t>(height);
@@ -380,7 +345,7 @@ void CaptureNode::loadOpenCvCalibration(const fs::path &path) {
 
 void CaptureNode::updateEventUndistortionParams() {
 	mCameraInfoMsg = mRawCameraInfoMsg;
-	mUndistortMap.release();
+	mUndistortMap = PixelRemap();
 
 	if (!mParams.undistortEvents) {
 		return;
@@ -407,31 +372,11 @@ void CaptureNode::updateEventUndistortionParams() {
 		distCoeffs.at<double>(0, index) = mRawCameraInfoMsg.d[static_cast<size_t>(index)];
 	}
 
-	std::vector<cv::Point2f> pixels;
-	pixels.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
-	for (int y = 0; y < height; ++y) {
-		for (int x = 0; x < width; ++x) {
-			pixels.emplace_back(static_cast<float>(x), static_cast<float>(y));
-		}
-	}
-
-	const cv::Mat pixelsMat(pixels);
-	cv::Mat undistortedPixels;
-	cv::Mat Knew;
-	const cv::Mat identity = cv::Mat::eye(3, 3, CV_64F);
 	const bool isFisheye = (mRawCameraInfoMsg.distortion_model == sensor_msgs::distortion_models::EQUIDISTANT);
-
-	if (isFisheye) {
-		cv::fisheye::estimateNewCameraMatrixForUndistortRectify(
-			Kdist, distCoeffs, cv::Size(width, height), identity, Knew, 0.0);
-		cv::fisheye::undistortPoints(pixelsMat, undistortedPixels, Kdist, distCoeffs, identity, Knew);
-	}
-	else {
-		Knew = cv::getOptimalNewCameraMatrix(Kdist, distCoeffs, cv::Size(width, height), 0.0);
-		cv::undistortPoints(pixelsMat, undistortedPixels, Kdist, distCoeffs, cv::noArray(), Knew);
-	}
-
-	mUndistortMap = undistortedPixels.reshape(2, height);
+	const auto undistortion
+		= buildUndistortionMap(Kdist, distCoeffs, cv::Size(width, height), isFisheye);
+	mUndistortMap      = undistortion.remap;
+	const cv::Mat Knew = undistortion.newCameraMatrix;
 
 	const double fxNew = Knew.at<double>(0, 0);
 	const double fyNew = Knew.at<double>(1, 1);
@@ -443,32 +388,6 @@ void CaptureNode::updateEventUndistortionParams() {
 	mCameraInfoMsg.k                = {fxNew, 0.0, cxNew, 0.0, fyNew, cyNew, 0.0, 0.0, 1.0};
 	mCameraInfoMsg.r                = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
 	mCameraInfoMsg.p                = {fxNew, 0.0, cxNew, 0.0, 0.0, fyNew, cyNew, 0.0, 0.0, 0.0, 1.0, 0.0};
-}
-
-dv::EventStore CaptureNode::undistortEvents(const dv::EventStore &events) {
-	if (mUndistortMap.empty()) {
-		return events;
-	}
-
-	const int width  = mUndistortMap.cols;
-	const int height = mUndistortMap.rows;
-
-	auto packet = std::make_shared<dv::EventPacket>();
-	packet->elements.reserve(events.size());
-
-	for (const auto &event : events) {
-		const auto &uv = mUndistortMap.at<cv::Vec2f>(event.y(), event.x());
-		const auto ux  = static_cast<int16_t>(std::round(uv[0]));
-		const auto uy  = static_cast<int16_t>(std::round(uv[1]));
-
-		if (ux < 0 || ux >= width || uy < 0 || uy >= height) {
-			continue;
-		}
-
-		packet->elements.emplace_back(event.timestamp(), ux, uy, event.polarity());
-	}
-
-	return dv::EventStore(std::const_pointer_cast<const dv::EventPacket>(packet));
 }
 
 void CaptureNode::setCameraInfo(
@@ -939,13 +858,12 @@ void CaptureNode::eventsPublisher() {
 					store = *events;
 				}
 
-				if (mParams.undistortEvents) {
-					store = undistortEvents(store);
-				}
-
 				if (mEventArrayPublisher->get_subscription_count() > 0) {
-					mEventArrayPublisher->publish(
-						std::make_unique<EventArrayMessage>(dv_ros2_msgs::toRosEventsMessage(store, resolution)));
+					// Undistorted during conversion; the map only exists with undistortEvents on.
+					auto message = mUndistortMap.empty()
+									 ? dv_ros2_msgs::toRosEventsMessage(store, resolution)
+									 : dv_ros2_msgs::toRosEventsMessage(store, resolution, mUndistortMap);
+					mEventArrayPublisher->publish(std::make_unique<EventArrayMessage>(std::move(message)));
 				}
 
 				mCurrentSeek = events->getHighestTime();

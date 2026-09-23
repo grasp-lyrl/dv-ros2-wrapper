@@ -45,11 +45,19 @@ target_link_libraries(capture_node_component "${cpp_typesupport_target}")
 
 rclcpp_components_register_nodes(capture_node_component "dv_capture_node::CaptureNode")
 
+# Undistortion for event streams that bypass the capture node, e.g. bags.
+add_library(event_undistort_component SHARED src/event_undistort_node.cpp)
+ament_target_dependencies(event_undistort_component
+  rclcpp rclcpp_components dv_ros2_msgs dv_ros2_messaging
+)
+target_link_libraries(event_undistort_component dv::processing ${OpenCV_LIBS})
+rclcpp_components_register_nodes(event_undistort_component "dv_capture_node::EventUndistortNode")
+
 # Standalone executable
 add_executable(capture_node src/main.cpp)
 target_link_libraries(capture_node capture_node_component)
 
-install(TARGETS capture_node_component
+install(TARGETS capture_node_component event_undistort_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin

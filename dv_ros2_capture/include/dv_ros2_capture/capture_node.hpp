@@ -11,6 +11,7 @@
 
 #include <dv_ros2_messaging/messaging.hpp>
 
+#include "event_undistortion.hpp"
 #include "parameters_loader.hpp"
 
 #include <boost/lockfree/spsc_queue.hpp>
@@ -99,7 +100,7 @@ private:
 	// Camera info message buffer
 	dv_ros2_msgs::CameraInfoMessage mCameraInfoMsg;
 	dv_ros2_msgs::CameraInfoMessage mRawCameraInfoMsg;
-	cv::Mat mUndistortMap;
+	PixelRemap mUndistortMap;
 	std::unique_ptr<std::thread> mCameraInfoThread = nullptr;
 
 	// threads related
@@ -178,16 +179,9 @@ private:
 	void updateEventUndistortionParams();
 
 	/**
-	 * Replace the camera intrinsics with those in an OpenCV FileStorage calibration and
-	 * rebuild the undistortion map from them.
-	 * @param path OpenCV XML/YAML holding camera_matrix and distortion_coefficients.
+	 * Load intrinsics from an OpenCV calibration file and rebuild the undistortion map.
 	 */
 	void loadOpenCvCalibration(const fs::path &path);
-
-	/**
-	 * Undistort event coordinates using the stored lookup table.
-	 */
-	[[nodiscard]] dv::EventStore undistortEvents(const dv::EventStore &events);
 
 	/**
 	 * Convert the imu message frame into the camera frame if the transformation exists.
