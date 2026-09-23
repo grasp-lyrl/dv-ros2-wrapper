@@ -3,7 +3,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
@@ -13,6 +13,10 @@ monodepth_args = [
     DeclareLaunchArgument('window_ms', default_value='50'),
     DeclareLaunchArgument('max_events', default_value='0', description='0 keeps every event'),
     DeclareLaunchArgument('visualization_enable', default_value='true'),
+    DeclareLaunchArgument('undistort_events', default_value='true'),
+    DeclareLaunchArgument(
+        'calibration_file', default_value='',
+        description='OpenCV FileStorage calibration; defaults to the capture package config'),
 ]
 
 
@@ -21,6 +25,7 @@ def generate_launch_description():
     config_dir = os.path.join(FindPackageShare('dv_ros2_capture').find('dv_ros2_capture'), 'config')
     settings_file = os.path.join(config_dir, 'settings.yaml')
     dynamic_file = os.path.join(config_dir, 'dynamic.yaml')
+    default_calib = os.path.join(config_dir, 'calib_40deg.xml')
 
     ld = LaunchDescription(monodepth_args)
 
@@ -37,7 +42,13 @@ def generate_launch_description():
                     package='dv_ros2_capture',
                     plugin='dv_capture_node::CaptureNode',
                     name='capture_node',
-                    parameters=[settings_file, dynamic_file],
+                    parameters=[settings_file, dynamic_file, {
+                        # Events are undistorted before publishing, so every consumer
+                        # downstream sees a rectified stream.
+                        'undistortEvents': LaunchConfiguration('undistort_events'),
+                        'opencvCalibrationFilePath': PythonExpression(
+                            ["'", LaunchConfiguration('calibration_file'), "' or '", default_calib, "'"]),
+                    }],
                     extra_arguments=[{'use_intra_process_comms': True}],
                 ),
                 ComposableNode(

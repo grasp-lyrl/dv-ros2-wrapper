@@ -215,6 +215,11 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &options) :
 		}
 	}
 
+	// An OpenCV calibration, if given, replaces whatever intrinsics we just settled on.
+	if (!mParams.opencvCalibrationFilePath.empty()) {
+		loadOpenCvCalibration(mParams.opencvCalibrationFilePath);
+	}
+
 	// IMPORTANT: User-supplied static IMU biases override anything
 	// loaded from the camera calibration file.
 	if (mParams.accelerometerBias.size() == 3) {
@@ -281,6 +286,94 @@ void CaptureNode::populateInfoMsg(const dv::camera::CameraGeometry &cameraGeomet
 	mCameraInfoMsg.k = {fx, 0, cx, 0, fy, cy, 0, 0, 1};
 	mCameraInfoMsg.r = {1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0};
 	mCameraInfoMsg.p = {fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1.0, 0};
+	mRawCameraInfoMsg = mCameraInfoMsg;
+	updateEventUndistortionParams();
+}
+
+void CaptureNode::loadOpenCvCalibration(const fs::path &path) {
+	if (!fs::exists(path)) {
+		throw dv::exceptions::InvalidArgument<std::string>(
+			"OpenCV calibration file does not exist!", path.string());
+	}
+
+	cv::FileStorage store(path.string(), cv::FileStorage::READ);
+	if (!store.isOpened()) {
+		throw dv::exceptions::InvalidArgument<std::string>("Cannot read OpenCV calibration!", path.string());
+	}
+
+	// The intrinsics sit under a node named for the camera serial, so find it by content
+	// rather than by name -- the serial in the file need not match this camera.
+	cv::FileNode camera;
+	for (const auto &node : store.root()) {
+		if (node.isMap() && !node["camera_matrix"].empty()) {
+			camera = node;
+			break;
+		}
+	}
+	if (camera.empty()) {
+		throw dv::exceptions::InvalidArgument<std::string>(
+			"No node with a camera_matrix in OpenCV calibration!", path.string());
+	}
+
+	cv::Mat K;
+	cv::Mat D;
+	camera["camera_matrix"] >> K;
+	camera["distortion_coefficients"] >> D;
+	if (K.total() != 9 || D.empty()) {
+		throw dv::exceptions::InvalidArgument<std::string>(
+			"OpenCV calibration lacks a 3x3 camera_matrix or distortion_coefficients!", path.string());
+	}
+	K.convertTo(K, CV_64F);
+	D.convertTo(D, CV_64F);
+
+	int width  = 0;
+	int height = 0;
+	camera["image_width"] >> width;
+	camera["image_height"] >> height;
+
+	// Fall back to the sensor's own resolution when the file does not carry one.
+	if (width <= 0 || height <= 0) {
+		const auto resolution = mReader->isEventStreamAvailable() ? mReader->getEventResolution()
+																  : mReader->getFrameResolution();
+		if (!resolution.has_value()) {
+			throw std::runtime_error("OpenCV calibration has no resolution and the sensor reports none.");
+		}
+		width  = resolution->width;
+		height = resolution->height;
+	}
+
+	if (const auto sensor = mReader->getEventResolution();
+		sensor.has_value() && (sensor->width != width || sensor->height != height)) {
+		RCLCPP_WARN(this->get_logger(),
+			"OpenCV calibration is for %dx%d but the event sensor is %dx%d; undistortion will be wrong.",
+			width, height, sensor->width, sensor->height);
+	}
+
+	const auto fisheyeNode  = store["use_fisheye_model"];
+	const bool isFisheye    = !fisheyeNode.empty() && static_cast<int>(fisheyeNode) != 0;
+
+	mCameraInfoMsg.width            = static_cast<uint32_t>(width);
+	mCameraInfoMsg.height           = static_cast<uint32_t>(height);
+	mCameraInfoMsg.distortion_model = isFisheye ? sensor_msgs::distortion_models::EQUIDISTANT
+												: sensor_msgs::distortion_models::PLUMB_BOB;
+	mCameraInfoMsg.d.assign(D.begin<double>(), D.end<double>());
+	if (!isFisheye && mCameraInfoMsg.d.size() < 5) {
+		mCameraInfoMsg.d.resize(5, 0.0);
+	}
+
+	const double fx = K.at<double>(0, 0);
+	const double fy = K.at<double>(1, 1);
+	const double cx = K.at<double>(0, 2);
+	const double cy = K.at<double>(1, 2);
+	mCameraInfoMsg.k = {fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0};
+	mCameraInfoMsg.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+	mCameraInfoMsg.p = {fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0};
+
+	RCLCPP_INFO(this->get_logger(),
+		"Loaded OpenCV calibration [%s]: %dx%d, f=(%.1f, %.1f), c=(%.1f, %.1f), %s, %zu distortion coefficients.",
+		path.c_str(), width, height, fx, fy, cx, cy, isFisheye ? "fisheye" : "plumb-bob",
+		mCameraInfoMsg.d.size());
+
 	mRawCameraInfoMsg = mCameraInfoMsg;
 	updateEventUndistortionParams();
 }

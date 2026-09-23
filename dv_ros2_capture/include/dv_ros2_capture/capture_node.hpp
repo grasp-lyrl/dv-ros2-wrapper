@@ -178,6 +178,13 @@ private:
 	void updateEventUndistortionParams();
 
 	/**
+	 * Replace the camera intrinsics with those in an OpenCV FileStorage calibration and
+	 * rebuild the undistortion map from them.
+	 * @param path OpenCV XML/YAML holding camera_matrix and distortion_coefficients.
+	 */
+	void loadOpenCvCalibration(const fs::path &path);
+
+	/**
 	 * Undistort event coordinates using the stored lookup table.
 	 */
 	[[nodiscard]] dv::EventStore undistortEvents(const dv::EventStore &events);

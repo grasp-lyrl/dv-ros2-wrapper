@@ -23,6 +23,7 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 	node_.declare_parameter("noiseBackgroundActivityTime", static_cast<int>(params_.noiseBATime));
 	node_.declare_parameter("undistortEvents", params_.undistortEvents);
 	node_.declare_parameter("cameraCalibrationFilePath", std::string(""));
+	node_.declare_parameter("opencvCalibrationFilePath", std::string(""));
 	node_.declare_parameter("aedat4FilePath", std::string(""));
 	node_.declare_parameter("syncDevices", std::vector<std::string>{});
 	node_.declare_parameter("waitForSync", params_.waitForSync);
@@ -66,6 +67,9 @@ ParametersLoader::ParametersLoader(rclcpp::Node &node) : node_(node) {
 
 	std::string tmp = node_.get_parameter("cameraCalibrationFilePath").as_string();
 	params_.cameraCalibrationFilePath = static_cast<std::filesystem::path>(tmp);
+
+	params_.opencvCalibrationFilePath
+		= static_cast<std::filesystem::path>(node_.get_parameter("opencvCalibrationFilePath").as_string());
 
 	tmp = node_.get_parameter("aedat4FilePath").as_string();
 	if (!tmp.empty()) {
@@ -125,6 +129,7 @@ void ParametersLoader::printConfiguration() {
 		RCLCPP_INFO(node_.get_logger(), "cameraName: %s", params_.cameraName.c_str());
 	}
 	RCLCPP_INFO(node_.get_logger(), "cameraCalibrationFilePath: %s", params_.cameraCalibrationFilePath.c_str());
+	RCLCPP_INFO(node_.get_logger(), "opencvCalibrationFilePath: %s", params_.opencvCalibrationFilePath.c_str());
 	RCLCPP_INFO(node_.get_logger(), "noiseFiltering: %s", params_.noiseFiltering ? "yes" : "no");
 	RCLCPP_INFO(node_.get_logger(), "noiseBackgroundActivityTime: %ld", params_.noiseBATime);
 	RCLCPP_INFO(node_.get_logger(), "undistortEvents: %s", params_.undistortEvents ? "yes" : "no");
