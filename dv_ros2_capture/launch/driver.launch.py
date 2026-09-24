@@ -14,6 +14,9 @@ driver_args = [
     DeclareLaunchArgument(
         'calibration_file', default_value='',
         description='OpenCV FileStorage calibration; defaults to this package config'),
+    DeclareLaunchArgument(
+        'bag_prefix', default_value='/data/nf1_',
+        description='Bag path prefix, timestamp appended; run.sh mounts /mnt/extreme-pro at /data'),
 ]
 
 
@@ -59,33 +62,32 @@ def generate_launch_description():
                     name='imu_visualization_node',
                     extra_arguments=[{'use_intra_process_comms': True}],
                 ),
-                # ComposableNode(
-                #     package='rosbag2_composable_recorder',
-                #     plugin='rosbag2_composable_recorder::ComposableRecorder',
-                #     name='recorder',
-                #     parameters=[
-                #         {
-                #             'topics': [
-                #                 "/neurofly1/zed_node/rgb/image_rect_color",
-                #                 "/neurofly1/zed_node/rgb/camera_info",
-                #                 "/neurofly1/zed_node/depth/depth_registered",
-                #                 "/neurofly1/zed_node/depth/camera_info",
-                #                 "/neurofly1/control_odom",
-                #                 "/neurofly1/mavros/distance_sensor",
-                #                 "/neurofly1/events",
-                #                 "/neurofly1/imu"
-                #             ],
-                #             'storage_id': 'mcap',
-                #             'record_all': False,
-                #             'disable_discovery': False,
-                #             'serialization_format': 'cdr',
-                #             'start_recording_immediately': False,
-                #             'bag_prefix': '/mnt/extreme-pro/22_09_2026/',
-                #         }
-                #     ],
-                #     remappings=[],
-                #     extra_arguments=[{'use_intra_process_comms': True}],
-                # ),
+                # Idle until `ros2 service call /start_recording std_srvs/srv/Trigger`.
+                ComposableNode(
+                    package='rosbag2_composable_recorder',
+                    plugin='rosbag2_composable_recorder::ComposableRecorder',
+                    name='recorder',
+                    parameters=[{
+                        'topics': [
+                            '/neurofly1/zed_node/rgb/image_rect_color',
+                            '/neurofly1/zed_node/rgb/camera_info',
+                            '/neurofly1/zed_node/depth/depth_registered',
+                            '/neurofly1/zed_node/depth/camera_info',
+                            '/neurofly1/control_odom',
+                            '/neurofly1/mavros/distance_sensor',
+                            # Relative, so they follow the capture node's namespace.
+                            'events',
+                            'imu',
+                        ],
+                        'storage_id': 'mcap',
+                        'record_all': False,
+                        'disable_discovery': False,
+                        'serialization_format': 'cdr',
+                        'start_recording_immediately': False,
+                        'bag_prefix': LaunchConfiguration('bag_prefix'),
+                    }],
+                    extra_arguments=[{'use_intra_process_comms': True}],
+                ),
             ],
             output='screen',
         )
