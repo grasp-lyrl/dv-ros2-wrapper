@@ -69,8 +69,9 @@ MonoDepthNode::MonoDepthNode(const rclcpp::NodeOptions &options) : rclcpp::Node(
 	mSpinThread      = true;
 	mInferenceThread = std::thread(&MonoDepthNode::inferenceLoop, this);
 
-	RCLCPP_INFO(this->get_logger(), "Monodepth node ready: %d ms windows on [%s], %dx%d.",
-		mParams.windowMs, mParams.inputTopic.c_str(), mParams.sensorWidth, mParams.sensorHeight);
+	RCLCPP_INFO(this->get_logger(), "Monodepth node ready: %d ms windows, stride %d, on [%s], %dx%d.",
+		mParams.windowMs, mParams.windowStride, mParams.inputTopic.c_str(), mParams.sensorWidth,
+		mParams.sensorHeight);
 }
 
 MonoDepthNode::~MonoDepthNode() {
@@ -91,6 +92,7 @@ void MonoDepthNode::readParameters() {
 	mParams.inputTopic           = this->declare_parameter("input_topic", mParams.inputTopic);
 	mParams.modelPath            = this->declare_parameter("model_path", mParams.modelPath);
 	mParams.windowMs             = this->declare_parameter("window_ms", mParams.windowMs);
+	mParams.windowStride         = this->declare_parameter("window_stride", mParams.windowStride);
 	mParams.sensorWidth          = this->declare_parameter("sensor_width", mParams.sensorWidth);
 	mParams.sensorHeight         = this->declare_parameter("sensor_height", mParams.sensorHeight);
 	mParams.maxEvents            = this->declare_parameter("max_events", mParams.maxEvents);
@@ -104,6 +106,9 @@ void MonoDepthNode::readParameters() {
 	}
 	if (mParams.windowMs <= 0) {
 		throw std::invalid_argument("window_ms must be positive");
+	}
+	if (mParams.windowStride <= 0) {
+		throw std::invalid_argument("window_stride must be positive");
 	}
 	if (mParams.sensorWidth <= 0 || mParams.sensorHeight <= 0) {
 		throw std::invalid_argument("sensor_width and sensor_height must be positive");
@@ -168,7 +173,7 @@ void MonoDepthNode::eventCallback(const dv_ros2_msgs::EventArrayMessage::ConstSh
 }
 
 void MonoDepthNode::windowCallback(const dv::EventStore &events) {
-	if (events.isEmpty()) {
+	if (mWindowCount++ % mParams.windowStride != 0 || events.isEmpty()) {
 		return;
 	}
 	mPendingWindow.write(dv::EventStore(events));

@@ -31,6 +31,8 @@ struct Params {
 	int windowMs     = 50;
 	int sensorWidth  = 640;
 	int sensorHeight = 480;
+	/// Run on every Nth window and drop the rest.
+	int windowStride = 1;
 	/// Decimate windows above this many events; 0 keeps them all.
 	int maxEvents             = 0;
 	int deviceId              = 0;
@@ -93,6 +95,7 @@ private:
 
 	dv::EventStreamSlicer mSlicer;
 	std::optional<int> mJobId;
+	int64_t mWindowCount = 0;
 
 	LatestValue<dv::EventStore> mPendingWindow;
 
