@@ -68,7 +68,15 @@ target_link_libraries(monodepth_node_component
 
 rclcpp_components_register_nodes(monodepth_node_component "dv_monodepth_node::MonoDepthNode")
 
-install(TARGETS monodepth_node_component
+add_library(metric_depth_node_component SHARED src/metric_depth_node.cpp)
+
+ament_target_dependencies(metric_depth_node_component rclcpp rclcpp_components sensor_msgs)
+
+target_link_libraries(metric_depth_node_component ${OpenCV_LIBS})
+
+rclcpp_components_register_nodes(metric_depth_node_component "dv_monodepth_node::MetricDepthNode")
+
+install(TARGETS monodepth_node_component metric_depth_node_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin

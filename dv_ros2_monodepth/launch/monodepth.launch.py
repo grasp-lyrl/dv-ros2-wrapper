@@ -6,14 +6,19 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 monodepth_args = [
     DeclareLaunchArgument('model_path', description='AOTI .pt2 from export_f3_aoti.py --module depth'),
     DeclareLaunchArgument('window_ms', default_value='50'),
+    DeclareLaunchArgument('window_stride', default_value='2', description='Run on every Nth window'),
     DeclareLaunchArgument('max_events', default_value='0', description='0 keeps every event'),
     DeclareLaunchArgument('visualization_enable', default_value='true'),
-    DeclareLaunchArgument('undistort_events', default_value='true'),
+    DeclareLaunchArgument('undistort_events', default_value='false'),
+    DeclareLaunchArgument('camera_height', default_value='1.0', description='Metres above the floor'),
+    DeclareLaunchArgument('height_topic', default_value='', description='sensor_msgs/Range; empty uses camera_height'),
+    DeclareLaunchArgument('max_depth', default_value='5.0', description='Metres; 0 keeps every depth'),
     DeclareLaunchArgument(
         'calibration_file', default_value='',
         description='OpenCV FileStorage calibration; defaults to the capture package config'),
@@ -56,10 +61,22 @@ def generate_launch_description():
                         'input_topic': 'events',
                         'model_path': LaunchConfiguration('model_path'),
                         'window_ms': LaunchConfiguration('window_ms'),
+                        'window_stride': LaunchConfiguration('window_stride'),
                         'max_events': LaunchConfiguration('max_events'),
                         'sensor_width': 640,
                         'sensor_height': 480,
                         'publish_visualization': True,
+                    }],
+                    extra_arguments=[{'use_intra_process_comms': True}],
+                ),
+                ComposableNode(
+                    package='dv_ros2_monodepth',
+                    plugin='dv_monodepth_node::MetricDepthNode',
+                    name='metric_depth_node',
+                    parameters=[{
+                        'camera_height': LaunchConfiguration('camera_height'),
+                        'height_topic': ParameterValue(LaunchConfiguration('height_topic'), value_type=str),
+                        'max_depth': LaunchConfiguration('max_depth'),
                     }],
                     extra_arguments=[{'use_intra_process_comms': True}],
                 ),
