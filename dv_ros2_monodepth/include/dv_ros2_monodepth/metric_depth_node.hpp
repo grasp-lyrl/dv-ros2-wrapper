@@ -16,6 +16,8 @@ namespace dv_monodepth_node {
 
 /// Node parameters, all settable as ROS2 parameters.
 struct MetricDepthParams {
+	/// OpenCV FileStorage calibration; empty loads dv_ros2_capture's calib_40deg.xml.
+	std::string calibrationFile = "";
 	/// Camera height above the floor, in metres, until a height message arrives.
 	double cameraHeight = 1.0;
 	/// sensor_msgs/Range to take the height from; empty keeps cameraHeight.
@@ -51,7 +53,7 @@ private:
 	void readParameters();
 
 	/// Unproject every pixel once, through the camera's distortion.
-	void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr &info);
+	void unprojectPixels();
 
 	void heightCallback(const sensor_msgs::msg::Range::ConstSharedPtr &range);
 
@@ -65,12 +67,11 @@ private:
 	MetricDepthParams mParams;
 
 	rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mDisparitySubscriber;
-	rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr mCameraInfoSubscriber;
 	rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr mHeightSubscriber;
 	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mDepthPublisher;
 	rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr mDepthInfoPublisher;
 
-	std::optional<sensor_msgs::msg::CameraInfo> mCameraInfo;
+	sensor_msgs::msg::CameraInfo mCameraInfo;
 	double mHeight = 0.0;
 
 	/// Per pixel, r·g for its z = 1 ray; 0 where the ray cannot reach the floor.

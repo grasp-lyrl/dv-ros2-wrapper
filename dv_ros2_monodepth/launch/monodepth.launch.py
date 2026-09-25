@@ -3,7 +3,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
@@ -15,13 +15,12 @@ monodepth_args = [
     DeclareLaunchArgument('window_stride', default_value='2', description='Run on every Nth window'),
     DeclareLaunchArgument('max_events', default_value='0', description='0 keeps every event'),
     DeclareLaunchArgument('visualization_enable', default_value='true'),
-    DeclareLaunchArgument('undistort_events', default_value='false'),
     DeclareLaunchArgument('camera_height', default_value='1.0', description='Metres above the floor'),
     DeclareLaunchArgument('height_topic', default_value='', description='sensor_msgs/Range; empty uses camera_height'),
     DeclareLaunchArgument('max_depth', default_value='5.0', description='Metres; 0 keeps every depth'),
     DeclareLaunchArgument(
         'calibration_file', default_value='',
-        description='OpenCV FileStorage calibration; defaults to the capture package config'),
+        description="Metric depth node's OpenCV calibration; empty uses dv_ros2_capture's calib_40deg.xml"),
 ]
 
 
@@ -30,7 +29,6 @@ def generate_launch_description():
     config_dir = os.path.join(FindPackageShare('dv_ros2_capture').find('dv_ros2_capture'), 'config')
     settings_file = os.path.join(config_dir, 'settings.yaml')
     dynamic_file = os.path.join(config_dir, 'dynamic.yaml')
-    default_calib = os.path.join(config_dir, 'calib_40deg.xml')
 
     ld = LaunchDescription(monodepth_args)
 
@@ -46,11 +44,7 @@ def generate_launch_description():
                     package='dv_ros2_capture',
                     plugin='dv_capture_node::CaptureNode',
                     name='capture_node',
-                    parameters=[settings_file, dynamic_file, {
-                        'undistortEvents': LaunchConfiguration('undistort_events'),
-                        'opencvCalibrationFilePath': PythonExpression(
-                            ["'", LaunchConfiguration('calibration_file'), "' or '", default_calib, "'"]),
-                    }],
+                    parameters=[settings_file, dynamic_file],
                     extra_arguments=[{'use_intra_process_comms': True}],
                 ),
                 ComposableNode(
@@ -74,6 +68,7 @@ def generate_launch_description():
                     plugin='dv_monodepth_node::MetricDepthNode',
                     name='metric_depth_node',
                     parameters=[{
+                        'calibration_file': ParameterValue(LaunchConfiguration('calibration_file'), value_type=str),
                         'camera_height': LaunchConfiguration('camera_height'),
                         'height_topic': ParameterValue(LaunchConfiguration('height_topic'), value_type=str),
                         'max_depth': LaunchConfiguration('max_depth'),

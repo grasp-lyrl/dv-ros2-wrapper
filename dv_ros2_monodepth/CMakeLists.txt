@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -70,7 +71,7 @@ rclcpp_components_register_nodes(monodepth_node_component "dv_monodepth_node::Mo
 
 add_library(metric_depth_node_component SHARED src/metric_depth_node.cpp)
 
-ament_target_dependencies(metric_depth_node_component rclcpp rclcpp_components sensor_msgs)
+ament_target_dependencies(metric_depth_node_component rclcpp rclcpp_components sensor_msgs ament_index_cpp)
 
 target_link_libraries(metric_depth_node_component ${OpenCV_LIBS})
 

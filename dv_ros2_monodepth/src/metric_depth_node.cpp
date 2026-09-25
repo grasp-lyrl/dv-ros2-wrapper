@@ -1,7 +1,9 @@
 #include "dv_ros2_monodepth/metric_depth_node.hpp"
 
 #include <opencv2/calib3d.hpp>
+#include <opencv2/core.hpp>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 #include <sensor_msgs/distortion_models.hpp>
 
@@ -21,19 +23,63 @@ constexpr double kFloorMinAngle = 8.0 * std::numbers::pi / 180.0;
 constexpr size_t kScoredPixels      = 4000;
 constexpr double kMinInlierFraction = 0.25;
 constexpr size_t kMinInliers        = 300;
+
+/// The camera node is found by content, since it is named for a serial that need not match this camera.
+sensor_msgs::msg::CameraInfo readCalibration(const std::string &path) {
+	cv::FileStorage store(path, cv::FileStorage::READ);
+	if (!store.isOpened()) {
+		throw std::invalid_argument("Cannot read calibration: " + path);
+	}
+	cv::FileNode camera;
+	for (const auto &node : store.root()) {
+		if (node.isMap() && !node["camera_matrix"].empty()) {
+			camera = node;
+			break;
+		}
+	}
+	cv::Mat cameraMatrix;
+	cv::Mat distortion;
+	int width  = 0;
+	int height = 0;
+	if (!camera.empty()) {
+		camera["camera_matrix"] >> cameraMatrix;
+		camera["distortion_coefficients"] >> distortion;
+		camera["image_width"] >> width;
+		camera["image_height"] >> height;
+	}
+	if (cameraMatrix.total() != 9 || distortion.empty() || width <= 0 || height <= 0) {
+		throw std::invalid_argument(
+			"Calibration lacks a camera_matrix, distortion_coefficients or image size: " + path);
+	}
+	cameraMatrix.convertTo(cameraMatrix, CV_64F);
+	distortion.convertTo(distortion, CV_64F);
+	const auto fisheyeNode = store["use_fisheye_model"];
+	const bool fisheye     = !fisheyeNode.empty() && static_cast<int>(fisheyeNode) != 0;
+
+	sensor_msgs::msg::CameraInfo info;
+	info.width  = static_cast<uint32_t>(width);
+	info.height = static_cast<uint32_t>(height);
+	info.distortion_model
+		= fisheye ? sensor_msgs::distortion_models::EQUIDISTANT : sensor_msgs::distortion_models::PLUMB_BOB;
+	info.d.assign(distortion.begin<double>(), distortion.end<double>());
+	std::copy(cameraMatrix.begin<double>(), cameraMatrix.end<double>(), info.k.begin());
+	info.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+	for (size_t row = 0; row < 3; ++row) {
+		std::copy_n(info.k.begin() + 3 * row, 3, info.p.begin() + 4 * row);
+	}
+	return info;
+}
 } // namespace
 
 MetricDepthNode::MetricDepthNode(const rclcpp::NodeOptions &options) :
 	rclcpp::Node("metric_depth_node", options) {
 	readParameters();
+	mCameraInfo = readCalibration(mParams.calibrationFile);
+	unprojectPixels();
 
 	mDepthPublisher     = this->create_publisher<sensor_msgs::msg::Image>("depth", 10);
 	mDepthInfoPublisher = this->create_publisher<sensor_msgs::msg::CameraInfo>("depth/camera_info", 10);
 
-	mCameraInfoSubscriber = this->create_subscription<sensor_msgs::msg::CameraInfo>("camera_info", 10,
-		[this](const sensor_msgs::msg::CameraInfo::ConstSharedPtr &info) {
-			this->cameraInfoCallback(info);
-		});
 	mDisparitySubscriber = this->create_subscription<sensor_msgs::msg::Image>("disparity",
 		rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::Image::ConstSharedPtr &disparity) {
 			this->disparityCallback(disparity);
@@ -55,6 +101,7 @@ MetricDepthNode::MetricDepthNode(const rclcpp::NodeOptions &options) :
 }
 
 void MetricDepthNode::readParameters() {
+	mParams.calibrationFile  = this->declare_parameter("calibration_file", mParams.calibrationFile);
 	mParams.cameraHeight     = this->declare_parameter("camera_height", mParams.cameraHeight);
 	mParams.heightTopic      = this->declare_parameter("height_topic", mParams.heightTopic);
 	mParams.invalidDepth     = this->declare_parameter("invalid_depth", mParams.invalidDepth);
@@ -63,6 +110,10 @@ void MetricDepthNode::readParameters() {
 	mParams.ransacTolerance  = this->declare_parameter("ransac_tolerance", mParams.ransacTolerance);
 	mParams.fitHoldMs        = this->declare_parameter("fit_hold_ms", mParams.fitHoldMs);
 
+	if (mParams.calibrationFile.empty()) {
+		mParams.calibrationFile
+			= ament_index_cpp::get_package_share_directory("dv_ros2_capture") + "/config/calib_40deg.xml";
+	}
 	if (mParams.cameraHeight <= 0.0) {
 		throw std::invalid_argument("camera_height must be positive");
 	}
@@ -77,26 +128,23 @@ void MetricDepthNode::readParameters() {
 	}
 }
 
-void MetricDepthNode::cameraInfoCallback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr &info) {
-	if (mCameraInfo.has_value() || info->width == 0 || info->height == 0) {
-		return;
-	}
-
+void MetricDepthNode::unprojectPixels() {
+	const auto &info = mCameraInfo;
 	std::vector<cv::Point2f> pixels;
-	pixels.reserve(static_cast<size_t>(info->width) * static_cast<size_t>(info->height));
-	for (uint32_t v = 0; v < info->height; ++v) {
-		for (uint32_t u = 0; u < info->width; ++u) {
+	pixels.reserve(static_cast<size_t>(info.width) * static_cast<size_t>(info.height));
+	for (uint32_t v = 0; v < info.height; ++v) {
+		for (uint32_t u = 0; u < info.width; ++u) {
 			pixels.emplace_back(static_cast<float>(u), static_cast<float>(v));
 		}
 	}
 
-	const cv::Matx33d cameraMatrix(info->k.data());
+	const cv::Matx33d cameraMatrix(info.k.data());
 	std::vector<cv::Point2f> rays;
-	if (info->distortion_model == sensor_msgs::distortion_models::EQUIDISTANT) {
-		cv::fisheye::undistortPoints(pixels, rays, cameraMatrix, info->d);
+	if (info.distortion_model == sensor_msgs::distortion_models::EQUIDISTANT) {
+		cv::fisheye::undistortPoints(pixels, rays, cameraMatrix, info.d);
 	}
 	else {
-		cv::undistortPoints(pixels, rays, cameraMatrix, info->d, cv::noArray(), cv::noArray(),
+		cv::undistortPoints(pixels, rays, cameraMatrix, info.d, cv::noArray(), cv::noArray(),
 			cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 100, 1e-9));
 	}
 
@@ -113,9 +161,8 @@ void MetricDepthNode::cameraInfoCallback(const sensor_msgs::msg::CameraInfo::Con
 		}
 	}
 
-	mCameraInfo = *info;
-	RCLCPP_INFO(this->get_logger(), "Camera %ux%u (%s): %zu pixels can see the floor.", info->width,
-		info->height, info->distortion_model.c_str(), mFloorPixels.size());
+	RCLCPP_INFO(this->get_logger(), "Camera %ux%u (%s) from [%s]: %zu pixels can see the floor.", info.width,
+		info.height, info.distortion_model.c_str(), mParams.calibrationFile.c_str(), mFloorPixels.size());
 }
 
 void MetricDepthNode::heightCallback(const sensor_msgs::msg::Range::ConstSharedPtr &range) {
@@ -128,13 +175,7 @@ void MetricDepthNode::heightCallback(const sensor_msgs::msg::Range::ConstSharedP
 }
 
 void MetricDepthNode::disparityCallback(const sensor_msgs::msg::Image::ConstSharedPtr &disparity) {
-	if (!mCameraInfo.has_value()) {
-		RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000, "Waiting for camera_info.");
-		return;
-	}
-	mCameraInfoSubscriber.reset();
-
-	const auto &info = *mCameraInfo;
+	const auto &info = mCameraInfo;
 	if (disparity->encoding != "32FC1" || disparity->width != info.width || disparity->height != info.height
 		|| disparity->step != disparity->width * sizeof(float)) {
 		RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
@@ -165,9 +206,6 @@ void MetricDepthNode::disparityCallback(const sensor_msgs::msg::Image::ConstShar
 
 	auto depth    = std::make_unique<sensor_msgs::msg::Image>();
 	depth->header = disparity->header;
-	if (depth->header.frame_id.empty()) {
-		depth->header.frame_id = info.header.frame_id;
-	}
 	depth->height       = disparity->height;
 	depth->width        = disparity->width;
 	depth->encoding     = "32FC1";
