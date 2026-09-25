@@ -215,11 +215,6 @@ CaptureNode::CaptureNode(const rclcpp::NodeOptions &options) :
 		}
 	}
 
-	// An OpenCV calibration overrides the intrinsics loaded above.
-	if (!mParams.opencvCalibrationFilePath.empty()) {
-		loadOpenCvCalibration(mParams.opencvCalibrationFilePath);
-	}
-
 	// IMPORTANT: User-supplied static IMU biases override anything
 	// loaded from the camera calibration file.
 	if (mParams.accelerometerBias.size() == 3) {
@@ -290,62 +285,9 @@ void CaptureNode::populateInfoMsg(const dv::camera::CameraGeometry &cameraGeomet
 	updateEventUndistortionParams();
 }
 
-void CaptureNode::loadOpenCvCalibration(const fs::path &path) {
-	const auto calibration = readOpenCvCalibration(path);
-	const cv::Mat &K       = calibration.cameraMatrix;
-	const cv::Mat &D       = calibration.distortion;
-	int width              = calibration.resolution.width;
-	int height             = calibration.resolution.height;
-
-	// Fall back to the sensor resolution if the file has none.
-	if (width <= 0 || height <= 0) {
-		const auto resolution = mReader->isEventStreamAvailable() ? mReader->getEventResolution()
-																  : mReader->getFrameResolution();
-		if (!resolution.has_value()) {
-			throw std::runtime_error("OpenCV calibration has no resolution and the sensor reports none.");
-		}
-		width  = resolution->width;
-		height = resolution->height;
-	}
-
-	if (const auto sensor = mReader->getEventResolution();
-		sensor.has_value() && (sensor->width != width || sensor->height != height)) {
-		RCLCPP_WARN(this->get_logger(),
-			"OpenCV calibration is for %dx%d but the event sensor is %dx%d; undistortion will be wrong.",
-			width, height, sensor->width, sensor->height);
-	}
-
-	const bool isFisheye = calibration.fisheye;
-
-	mCameraInfoMsg.width            = static_cast<uint32_t>(width);
-	mCameraInfoMsg.height           = static_cast<uint32_t>(height);
-	mCameraInfoMsg.distortion_model = isFisheye ? sensor_msgs::distortion_models::EQUIDISTANT
-												: sensor_msgs::distortion_models::PLUMB_BOB;
-	mCameraInfoMsg.d.assign(D.begin<double>(), D.end<double>());
-	if (!isFisheye && mCameraInfoMsg.d.size() < 5) {
-		mCameraInfoMsg.d.resize(5, 0.0);
-	}
-
-	const double fx = K.at<double>(0, 0);
-	const double fy = K.at<double>(1, 1);
-	const double cx = K.at<double>(0, 2);
-	const double cy = K.at<double>(1, 2);
-	mCameraInfoMsg.k = {fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0};
-	mCameraInfoMsg.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-	mCameraInfoMsg.p = {fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0};
-
-	RCLCPP_INFO(this->get_logger(),
-		"Loaded OpenCV calibration [%s]: %dx%d, f=(%.1f, %.1f), c=(%.1f, %.1f), %s, %zu distortion coefficients.",
-		path.c_str(), width, height, fx, fy, cx, cy, isFisheye ? "fisheye" : "plumb-bob",
-		mCameraInfoMsg.d.size());
-
-	mRawCameraInfoMsg = mCameraInfoMsg;
-	updateEventUndistortionParams();
-}
-
 void CaptureNode::updateEventUndistortionParams() {
 	mCameraInfoMsg = mRawCameraInfoMsg;
-	mUndistortMap = PixelRemap();
+	mUndistortMap.release();
 
 	if (!mParams.undistortEvents) {
 		return;
@@ -372,11 +314,31 @@ void CaptureNode::updateEventUndistortionParams() {
 		distCoeffs.at<double>(0, index) = mRawCameraInfoMsg.d[static_cast<size_t>(index)];
 	}
 
+	std::vector<cv::Point2f> pixels;
+	pixels.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; ++x) {
+			pixels.emplace_back(static_cast<float>(x), static_cast<float>(y));
+		}
+	}
+
+	const cv::Mat pixelsMat(pixels);
+	cv::Mat undistortedPixels;
+	cv::Mat Knew;
+	const cv::Mat identity = cv::Mat::eye(3, 3, CV_64F);
 	const bool isFisheye = (mRawCameraInfoMsg.distortion_model == sensor_msgs::distortion_models::EQUIDISTANT);
-	const auto undistortion
-		= buildUndistortionMap(Kdist, distCoeffs, cv::Size(width, height), isFisheye);
-	mUndistortMap      = undistortion.remap;
-	const cv::Mat Knew = undistortion.newCameraMatrix;
+
+	if (isFisheye) {
+		cv::fisheye::estimateNewCameraMatrixForUndistortRectify(
+			Kdist, distCoeffs, cv::Size(width, height), identity, Knew, 0.0);
+		cv::fisheye::undistortPoints(pixelsMat, undistortedPixels, Kdist, distCoeffs, identity, Knew);
+	}
+	else {
+		Knew = cv::getOptimalNewCameraMatrix(Kdist, distCoeffs, cv::Size(width, height), 0.0);
+		cv::undistortPoints(pixelsMat, undistortedPixels, Kdist, distCoeffs, cv::noArray(), Knew);
+	}
+
+	mUndistortMap = undistortedPixels.reshape(2, height);
 
 	const double fxNew = Knew.at<double>(0, 0);
 	const double fyNew = Knew.at<double>(1, 1);
@@ -388,6 +350,32 @@ void CaptureNode::updateEventUndistortionParams() {
 	mCameraInfoMsg.k                = {fxNew, 0.0, cxNew, 0.0, fyNew, cyNew, 0.0, 0.0, 1.0};
 	mCameraInfoMsg.r                = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
 	mCameraInfoMsg.p                = {fxNew, 0.0, cxNew, 0.0, 0.0, fyNew, cyNew, 0.0, 0.0, 0.0, 1.0, 0.0};
+}
+
+dv::EventStore CaptureNode::undistortEvents(const dv::EventStore &events) {
+	if (mUndistortMap.empty()) {
+		return events;
+	}
+
+	const int width  = mUndistortMap.cols;
+	const int height = mUndistortMap.rows;
+
+	auto packet = std::make_shared<dv::EventPacket>();
+	packet->elements.reserve(events.size());
+
+	for (const auto &event : events) {
+		const auto &uv = mUndistortMap.at<cv::Vec2f>(event.y(), event.x());
+		const auto ux  = static_cast<int16_t>(std::round(uv[0]));
+		const auto uy  = static_cast<int16_t>(std::round(uv[1]));
+
+		if (ux < 0 || ux >= width || uy < 0 || uy >= height) {
+			continue;
+		}
+
+		packet->elements.emplace_back(event.timestamp(), ux, uy, event.polarity());
+	}
+
+	return dv::EventStore(std::const_pointer_cast<const dv::EventPacket>(packet));
 }
 
 void CaptureNode::setCameraInfo(
@@ -858,12 +846,15 @@ void CaptureNode::eventsPublisher() {
 					store = *events;
 				}
 
+				if (mParams.undistortEvents) {
+                    auto start_time = std::chrono::high_resolution_clock::now();
+					store = undistortEvents(store);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+				}
+
 				if (mEventArrayPublisher->get_subscription_count() > 0) {
-					// Undistorted during conversion; the map only exists with undistortEvents on.
-					auto message = mUndistortMap.empty()
-									 ? dv_ros2_msgs::toRosEventsMessage(store, resolution)
-									 : dv_ros2_msgs::toRosEventsMessage(store, resolution, mUndistortMap);
-					mEventArrayPublisher->publish(std::make_unique<EventArrayMessage>(std::move(message)));
+					mEventArrayPublisher->publish(
+						std::make_unique<EventArrayMessage>(dv_ros2_msgs::toRosEventsMessage(store, resolution)));
 				}
 
 				mCurrentSeek = events->getHighestTime();

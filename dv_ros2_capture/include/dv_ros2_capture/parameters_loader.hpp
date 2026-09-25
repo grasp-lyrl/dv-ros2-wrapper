@@ -17,8 +17,6 @@ struct Params {
 	std::string cameraName;
 	std::filesystem::path aedat4FilePath;
 	std::filesystem::path cameraCalibrationFilePath;
-	/// OpenCV calibration file; overrides the DV calibration's intrinsics when set.
-	std::filesystem::path opencvCalibrationFilePath;
 	std::string cameraFrameName    = "camera";
 	std::string imuFrameName       = "imu";
 	bool transformImuToCameraFrame = true;
