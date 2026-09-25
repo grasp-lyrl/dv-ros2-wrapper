@@ -1,0 +1,10 @@
+/events:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/imu:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
