@@ -195,24 +195,14 @@ using TriggerMessage = dv_ros2_msgs::msg::Trigger;
 	return msg;
 }
 
-/**
- * Convert an event store into a message, passing coordinates through `remap`, a callable
- * `bool(int x, int y, uint16_t &outX, uint16_t &outY)` that returns false to drop the event.
- */
-template<typename Remap>
-[[nodiscard]] inline EventArrayMessage toRosEventsMessage(
-	const dv::EventStore &events, const cv::Size &resolution, Remap &&remap) {
+[[nodiscard]] inline EventArrayMessage toRosEventsMessage(const dv::EventStore &events, const cv::Size &resolution) {
 	EventArrayMessage msg;
 	builtin_interfaces::msg::Time time = toRosTime(events.getLowestTime());
 
 	int64_t secInMicro = static_cast<int64_t>(time.sec) * 1'000'000;
+	msg.header.stamp   = toRosTime(events.getHighestTime());
 	msg.events.reserve(events.size());
 	for (const auto &event : events) {
-		uint16_t x = 0;
-		uint16_t y = 0;
-		if (!remap(event.x(), event.y(), x, y)) {
-			continue;
-		}
 		int64_t time_diff = event.timestamp() - secInMicro;
 		if (time_diff < 1'000'000) {
 			// We are in the same second, we only need to update the nano-second part
@@ -223,24 +213,15 @@ template<typename Remap>
 			secInMicro = static_cast<int64_t>(time.sec) * 1'000'000;
 		}
 		auto &e    = msg.events.emplace_back();
-		e.x        = x;
-		e.y        = y;
+		e.x        = event.x();
+		e.y        = event.y();
 		e.polarity = event.polarity();
 		e.ts       = time;
 	}
 
-	msg.header.stamp = msg.events.empty() ? toRosTime(0) : msg.events.back().ts;
-	msg.width        = resolution.width;
-	msg.height       = resolution.height;
+	msg.width  = resolution.width;
+	msg.height = resolution.height;
 	return msg;
-}
-
-[[nodiscard]] inline EventArrayMessage toRosEventsMessage(const dv::EventStore &events, const cv::Size &resolution) {
-	return toRosEventsMessage(events, resolution, [](const int x, const int y, uint16_t &outX, uint16_t &outY) {
-		outX = static_cast<uint16_t>(x);
-		outY = static_cast<uint16_t>(y);
-		return true;
-	});
 }
 
 /**
