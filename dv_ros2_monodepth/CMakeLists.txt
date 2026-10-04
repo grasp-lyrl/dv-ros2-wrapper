@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(dv_ros2_msgs REQUIRED)
 find_package(dv_ros2_messaging REQUIRED)
 find_package(dv-processing 2.0.0 REQUIRED)
@@ -71,7 +72,7 @@ rclcpp_components_register_nodes(monodepth_node_component "dv_monodepth_node::Mo
 
 add_library(metric_depth_node_component SHARED src/metric_depth_node.cpp)
 
-ament_target_dependencies(metric_depth_node_component rclcpp rclcpp_components sensor_msgs ament_index_cpp)
+ament_target_dependencies(metric_depth_node_component rclcpp rclcpp_components std_msgs sensor_msgs nav_msgs ament_index_cpp)
 
 target_link_libraries(metric_depth_node_component ${OpenCV_LIBS})
 

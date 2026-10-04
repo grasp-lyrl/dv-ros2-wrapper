@@ -14,6 +14,7 @@
   <depend>rclcpp_components</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>dv_ros2_msgs</depend>
   <depend>dv_ros2_messaging</depend>
 
