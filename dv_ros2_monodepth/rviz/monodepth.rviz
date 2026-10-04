@@ -4,7 +4,7 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /Depth1
+        - /Disparity1
         - /Events1
       Splitter Ratio: 0.5
     Tree Height: 400
@@ -17,7 +17,7 @@ Visualization Manager:
       Max Value: 1
       Median window: 5
       Min Value: 0
-      Name: Depth
+      Name: Disparity
       Normalize Range: true
       Topic:
         Depth: 5
@@ -25,6 +25,20 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /disparity_image
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 5
+      Median window: 5
+      Min Value: 0
+      Name: Metric depth
+      Normalize Range: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /depth
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
@@ -58,7 +72,9 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Depth:
+  Disparity:
+    collapsed: false
+  Metric depth:
     collapsed: false
   Events:
     collapsed: false
