@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 
@@ -403,6 +404,7 @@ std::optional<FloorFit> MetricDepthNode::fitFloor(const float *disparity) {
 	FloorFit fit;
 	fit.tolerance = mParams.ransacTolerance * std::max(percentile(0.98) - percentile(0.02), 1e-6);
 
+	auto bestScore       = std::numeric_limits<std::ptrdiff_t>::min();
 	size_t bestVotes     = 0;
 	double bestSlope     = 0.0;
 	double bestIntercept = 0.0;
@@ -416,10 +418,16 @@ std::optional<FloorFit> MetricDepthNode::fitFloor(const float *disparity) {
 		const double slope     = (static_cast<double>(mCandidateD[b]) - mCandidateD[a]) / dw;
 		const double intercept = mCandidateD[a] - slope * mCandidateW[a];
 		size_t votes           = 0;
+		size_t below           = 0;
 		for (const uint32_t index : mScored) {
-			votes += std::abs(slope * mCandidateW[index] + intercept - mCandidateD[index]) < fit.tolerance;
+			const double residual = slope * mCandidateW[index] + intercept - mCandidateD[index];
+			votes += std::abs(residual) < fit.tolerance;
+			below += residual >= fit.tolerance;
 		}
-		if (votes > bestVotes) {
+		// A candidate below a line would be farther than the floor, which hides it, so it counts against the line.
+		const auto score = static_cast<std::ptrdiff_t>(votes) - static_cast<std::ptrdiff_t>(below);
+		if (score > bestScore) {
+			bestScore     = score;
 			bestVotes     = votes;
 			bestSlope     = slope;
 			bestIntercept = intercept;

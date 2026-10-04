@@ -99,7 +99,7 @@ private:
 
 	void disparityCallback(const sensor_msgs::msg::Image::ConstSharedPtr &disparity);
 
-	/// Fit the floor line; empty if no line has enough support.
+	/// Fit the floor line by RANSAC, counting candidates below a line against it; empty if none has enough support.
 	[[nodiscard]] std::optional<FloorFit> fitFloor(const float *disparity);
 
 	/// Whether a fit agrees with the recently accepted ones.
