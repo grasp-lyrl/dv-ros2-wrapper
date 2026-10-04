@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <numbers>
 #include <stdexcept>
 
@@ -20,9 +21,12 @@ namespace {
 /// Rays at least this far below horizontal are floor candidates.
 constexpr double kFloorMinAngle = 8.0 * std::numbers::pi / 180.0;
 /// Pixels each hypothesis is scored against.
-constexpr size_t kScoredPixels      = 4000;
-constexpr double kMinInlierFraction = 0.25;
-constexpr size_t kMinInliers        = 300;
+constexpr size_t kScoredPixels = 4000;
+/// Accepted fits the consistency check takes its median over, and the fewest it needs to judge.
+constexpr size_t kFitHistory    = 10;
+constexpr size_t kMinFitHistory = 3;
+/// Odometry messages kept to find the attitude at a frame's stamp; about 1.3 s at 200 Hz.
+constexpr size_t kGravityHistory = 256;
 
 /// The camera node is found by content, since it is named for a serial that need not match this camera.
 sensor_msgs::msg::CameraInfo readCalibration(const std::string &path) {
@@ -76,9 +80,15 @@ MetricDepthNode::MetricDepthNode(const rclcpp::NodeOptions &options) :
 	readParameters();
 	mCameraInfo = readCalibration(mParams.calibrationFile);
 	unprojectPixels();
+	mPublishedInfo = mCameraInfo;
+	if (mParams.undistortDepth) {
+		buildUndistortion();
+	}
 
 	mDepthPublisher     = this->create_publisher<sensor_msgs::msg::Image>("depth", 10);
 	mDepthInfoPublisher = this->create_publisher<sensor_msgs::msg::CameraInfo>("depth/camera_info", 10);
+	mScalePublisher     = this->create_publisher<std_msgs::msg::Float64>("depth_fit/scale", 10);
+	mShiftPublisher     = this->create_publisher<std_msgs::msg::Float64>("depth_fit/shift", 10);
 
 	mDisparitySubscriber = this->create_subscription<sensor_msgs::msg::Image>("disparity",
 		rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::Image::ConstSharedPtr &disparity) {
@@ -96,19 +106,33 @@ MetricDepthNode::MetricDepthNode(const rclcpp::NodeOptions &options) :
 		rclcpp::SensorDataQoS(), [this](const sensor_msgs::msg::Range::ConstSharedPtr &range) {
 			this->heightCallback(range);
 		});
-	RCLCPP_INFO(this->get_logger(), "Metric depth node ready: height from [%s], %.2f m until it arrives.",
-		mParams.heightTopic.c_str(), mParams.cameraHeight);
+	std::string attitude;
+	if (!mParams.attitudeTopic.empty()) {
+		mAttitudeSubscriber = this->create_subscription<nav_msgs::msg::Odometry>(mParams.attitudeTopic,
+			rclcpp::SensorDataQoS(), [this](const nav_msgs::msg::Odometry::ConstSharedPtr &odom) {
+				this->attitudeCallback(odom);
+			});
+		attitude = " and the attitude from [" + mParams.attitudeTopic + "]";
+	}
+	RCLCPP_INFO(this->get_logger(), "Metric depth node ready: height from [%s]%s, %.2f m until it arrives.",
+		mParams.heightTopic.c_str(), attitude.c_str(), mParams.cameraHeight);
 }
 
 void MetricDepthNode::readParameters() {
 	mParams.calibrationFile  = this->declare_parameter("calibration_file", mParams.calibrationFile);
 	mParams.cameraHeight     = this->declare_parameter("camera_height", mParams.cameraHeight);
 	mParams.heightTopic      = this->declare_parameter("height_topic", mParams.heightTopic);
+	mParams.attitudeTopic    = this->declare_parameter("attitude_topic", mParams.attitudeTopic);
 	mParams.invalidDepth     = this->declare_parameter("invalid_depth", mParams.invalidDepth);
 	mParams.maxDepth         = this->declare_parameter("max_depth", mParams.maxDepth);
 	mParams.ransacIterations = this->declare_parameter("ransac_iterations", mParams.ransacIterations);
 	mParams.ransacTolerance  = this->declare_parameter("ransac_tolerance", mParams.ransacTolerance);
+	mParams.minInlierShare   = this->declare_parameter("min_inlier_share", mParams.minInlierShare);
+	mParams.minInliers       = this->declare_parameter("min_inliers", mParams.minInliers);
 	mParams.fitHoldMs        = this->declare_parameter("fit_hold_ms", mParams.fitHoldMs);
+	mParams.undistortDepth   = this->declare_parameter("undistort_depth", mParams.undistortDepth);
+	mParams.minHeight        = this->declare_parameter("min_height", mParams.minHeight);
+	mParams.maxFitChange     = this->declare_parameter("max_fit_change", mParams.maxFitChange);
 
 	if (mParams.calibrationFile.empty()) {
 		mParams.calibrationFile
@@ -123,8 +147,17 @@ void MetricDepthNode::readParameters() {
 	if (mParams.ransacIterations <= 0 || mParams.ransacTolerance <= 0.0) {
 		throw std::invalid_argument("ransac_iterations and ransac_tolerance must be positive");
 	}
+	if (mParams.minInlierShare < 0.0 || mParams.minInlierShare > 1.0) {
+		throw std::invalid_argument("min_inlier_share must be between 0 and 1");
+	}
+	if (mParams.minInliers < 2) {
+		throw std::invalid_argument("min_inliers must be at least 2");
+	}
 	if (mParams.fitHoldMs < 0) {
 		throw std::invalid_argument("fit_hold_ms must be zero (no hold) or positive");
+	}
+	if (mParams.minHeight < 0.0 || mParams.maxFitChange < 0.0) {
+		throw std::invalid_argument("min_height and max_fit_change must be zero (off) or positive");
 	}
 }
 
@@ -139,30 +172,82 @@ void MetricDepthNode::unprojectPixels() {
 	}
 
 	const cv::Matx33d cameraMatrix(info.k.data());
-	std::vector<cv::Point2f> rays;
 	if (info.distortion_model == sensor_msgs::distortion_models::EQUIDISTANT) {
-		cv::fisheye::undistortPoints(pixels, rays, cameraMatrix, info.d);
+		cv::fisheye::undistortPoints(pixels, mRays, cameraMatrix, info.d);
 	}
 	else {
-		cv::undistortPoints(pixels, rays, cameraMatrix, info.d, cv::noArray(), cv::noArray(),
+		cv::undistortPoints(pixels, mRays, cameraMatrix, info.d, cv::noArray(), cv::noArray(),
 			cv::TermCriteria(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 100, 1e-9));
 	}
-
-	mFloorRay.assign(rays.size(), 0.0f);
-	mFloorPixels.clear();
-	const double minSine = std::sin(kFloorMinAngle);
-	for (size_t i = 0; i < rays.size(); ++i) {
-		const double x = rays[i].x;
-		const double y = rays[i].y;
-		// Level camera: gravity is +y, so r·g = y for the z = 1 ray.
-		if (y / std::sqrt(x * x + y * y + 1.0) >= minSine) {
-			mFloorRay[i] = static_cast<float>(y);
-			mFloorPixels.push_back(static_cast<uint32_t>(i));
-		}
-	}
+	aimFloorRays(kLevelGravity);
 
 	RCLCPP_INFO(this->get_logger(), "Camera %ux%u (%s) from [%s]: %zu pixels can see the floor.", info.width,
 		info.height, info.distortion_model.c_str(), mParams.calibrationFile.c_str(), mFloorPixels.size());
+}
+
+void MetricDepthNode::aimFloorRays(const cv::Vec3d &gravity) {
+	mFloorRay.resize(mRays.size());
+	mFloorPixels.clear();
+	const double minSine = std::sin(kFloorMinAngle);
+	for (size_t i = 0; i < mRays.size(); ++i) {
+		const double x         = mRays[i].x;
+		const double y         = mRays[i].y;
+		const double w         = x * gravity[0] + y * gravity[1] + gravity[2];
+		const bool canSeeFloor = w / std::sqrt(x * x + y * y + 1.0) >= minSine;
+		mFloorRay[i]           = canSeeFloor ? static_cast<float>(w) : 0.0f;
+		if (canSeeFloor) {
+			mFloorPixels.push_back(static_cast<uint32_t>(i));
+		}
+	}
+}
+
+void MetricDepthNode::buildUndistortion() {
+	const auto &info = mCameraInfo;
+	const cv::Matx33d cameraMatrix(info.k.data());
+	const cv::Size size(static_cast<int>(info.width), static_cast<int>(info.height));
+	cv::Mat mapX;
+	cv::Mat mapY;
+	if (info.distortion_model == sensor_msgs::distortion_models::EQUIDISTANT) {
+		cv::fisheye::initUndistortRectifyMap(
+			cameraMatrix, info.d, cv::Matx33d::eye(), cameraMatrix, size, CV_32FC1, mapX, mapY);
+	}
+	else {
+		cv::initUndistortRectifyMap(cameraMatrix, info.d, cv::noArray(), cameraMatrix, size, CV_32FC1, mapX, mapY);
+	}
+
+	mUndistortSource.resize(static_cast<size_t>(size.area()));
+	std::vector<bool> sampled(mUndistortSource.size(), false);
+	for (int v = 0; v < size.height; ++v) {
+		for (int u = 0; u < size.width; ++u) {
+			const auto x      = static_cast<int>(std::lround(mapX.at<float>(v, u)));
+			const auto y      = static_cast<int>(std::lround(mapY.at<float>(v, u)));
+			const bool inside = x >= 0 && x < size.width && y >= 0 && y < size.height;
+			const int32_t source = inside ? y * size.width + x : -1;
+			mUndistortSource[static_cast<size_t>(v * size.width + u)] = source;
+			if (inside) {
+				sampled[static_cast<size_t>(source)] = true;
+			}
+		}
+	}
+	mPublishedInfo.distortion_model = sensor_msgs::distortion_models::PLUMB_BOB;
+	mPublishedInfo.d.assign(5, 0.0);
+
+	const auto unsampled = std::count(sampled.begin(), sampled.end(), false);
+	RCLCPP_INFO(this->get_logger(),
+		"Publishing depth undistorted to a %dx%d pinhole with the same K; %.1f%% of the sensor falls outside it.",
+		size.width, size.height, 100.0 * static_cast<double>(unsampled) / static_cast<double>(sampled.size()));
+}
+
+void MetricDepthNode::undistort(sensor_msgs::msg::Image &depth) {
+	const auto *distorted = reinterpret_cast<const float *>(depth.data.data());
+	mUndistortBuffer.resize(depth.data.size());
+	auto *out          = reinterpret_cast<float *>(mUndistortBuffer.data());
+	const auto invalid = static_cast<float>(mParams.invalidDepth);
+	for (size_t i = 0; i < mUndistortSource.size(); ++i) {
+		const int32_t source = mUndistortSource[i];
+		out[i]               = source < 0 ? invalid : distorted[source];
+	}
+	depth.data.swap(mUndistortBuffer);
 }
 
 void MetricDepthNode::heightCallback(const sensor_msgs::msg::Range::ConstSharedPtr &range) {
@@ -170,8 +255,28 @@ void MetricDepthNode::heightCallback(const sensor_msgs::msg::Range::ConstSharedP
 	const bool withinSpec = range->max_range <= range->min_range
 						 || (value >= range->min_range && value <= range->max_range);
 	if (std::isfinite(value) && value > 0.0f && withinSpec) {
-		mHeight = value;
+		mHeight = value * mGravity.back().direction[1];
 	}
+}
+
+void MetricDepthNode::attitudeCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &odom) {
+	const auto &q  = odom->pose.pose.orientation;
+	const double n = q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z;
+	// World down in the FLU body, then in the parallel camera's optical axes x, y, z = -y, -z, x.
+	const cv::Vec3d gravity(2.0 * (q.y * q.z + q.w * q.x) / n, (q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z) / n,
+		2.0 * (q.w * q.y - q.x * q.z) / n);
+	mGravity.push_back({rclcpp::Time(odom->header.stamp).nanoseconds(), gravity});
+	if (mGravity.size() > kGravityHistory) {
+		mGravity.pop_front();
+	}
+}
+
+cv::Vec3d MetricDepthNode::gravityAt(const int64_t stampNs) const {
+	const auto nearest = std::min_element(mGravity.begin(), mGravity.end(),
+		[stampNs](const GravitySample &a, const GravitySample &b) {
+			return std::abs(a.stampNs - stampNs) < std::abs(b.stampNs - stampNs);
+		});
+	return nearest->direction;
 }
 
 void MetricDepthNode::disparityCallback(const sensor_msgs::msg::Image::ConstSharedPtr &disparity) {
@@ -183,16 +288,35 @@ void MetricDepthNode::disparityCallback(const sensor_msgs::msg::Image::ConstShar
 			disparity->height, disparity->encoding.c_str());
 		return;
 	}
+	if (mParams.minHeight > 0.0 && mHeight < mParams.minHeight) {
+		++mFramesLow;
+		reportStats();
+		return;
+	}
 	const auto *values = reinterpret_cast<const float *>(disparity->data.data());
 
 	const int64_t stampNs = rclcpp::Time(disparity->header.stamp).nanoseconds();
 	const int64_t holdNs  = static_cast<int64_t>(mParams.fitHoldMs) * 1'000'000;
-	auto fit              = fitFloor(values);
+	if (stampNs - mLastFitNs > holdNs) {
+		mRecentSlopes.clear();
+	}
+	if (!mParams.attitudeTopic.empty()) {
+		aimFloorRays(gravityAt(stampNs));
+	}
+	auto fit = fitFloor(values);
+	if (fit.has_value() && !isConsistent(*fit)) {
+		fit.reset();
+		++mFitsRejected;
+	}
 	mVoteShareSum += mVoteShare;
 	if (fit.has_value()) {
 		mLastFit   = fit;
 		mLastFitNs = stampNs;
 		++mFramesFitted;
+		mRecentSlopes.push_back(fit->slope);
+		if (mRecentSlopes.size() > kFitHistory) {
+			mRecentSlopes.pop_front();
+		}
 	}
 	else if (mLastFit.has_value() && stampNs - mLastFitNs <= holdNs) {
 		fit = mLastFit;
@@ -230,8 +354,17 @@ void MetricDepthNode::disparityCallback(const sensor_msgs::msg::Image::ConstShar
 
 		out[i] = valid ? static_cast<float>(scale / gap) : invalid;
 	}
+	if (mParams.undistortDepth) {
+		undistort(*depth);
+	}
+	if (mScalePublisher->get_subscription_count() > 0) {
+		mScalePublisher->publish(std_msgs::msg::Float64().set__data(scale));
+	}
+	if (mShiftPublisher->get_subscription_count() > 0) {
+		mShiftPublisher->publish(std_msgs::msg::Float64().set__data(shift));
+	}
 
-	auto depthInfo    = std::make_unique<sensor_msgs::msg::CameraInfo>(info);
+	auto depthInfo    = std::make_unique<sensor_msgs::msg::CameraInfo>(mPublishedInfo);
 	depthInfo->header = depth->header;
 	mDepthPublisher->publish(std::move(depth));
 	mDepthInfoPublisher->publish(std::move(depthInfo));
@@ -249,7 +382,7 @@ std::optional<FloorFit> MetricDepthNode::fitFloor(const float *disparity) {
 		}
 	}
 	const size_t count = mCandidateW.size();
-	if (count < kMinInliers) {
+	if (count < static_cast<size_t>(mParams.minInliers)) {
 		return std::nullopt;
 	}
 
@@ -293,7 +426,7 @@ std::optional<FloorFit> MetricDepthNode::fitFloor(const float *disparity) {
 		}
 	}
 	mVoteShare = static_cast<double>(bestVotes) / static_cast<double>(scoredCount);
-	if (mVoteShare < kMinInlierFraction) {
+	if (mVoteShare < mParams.minInlierShare) {
 		return std::nullopt;
 	}
 
@@ -315,7 +448,7 @@ std::optional<FloorFit> MetricDepthNode::fitFloor(const float *disparity) {
 	}
 	const auto n             = static_cast<double>(inliers);
 	const double denominator = n * sumWW - sumW * sumW;
-	if (inliers < kMinInliers || denominator <= 0.0) {
+	if (inliers < static_cast<size_t>(mParams.minInliers) || denominator <= 0.0) {
 		return std::nullopt;
 	}
 	fit.slope = (n * sumWD - sumW * sumD) / denominator;
@@ -326,21 +459,49 @@ std::optional<FloorFit> MetricDepthNode::fitFloor(const float *disparity) {
 	return fit;
 }
 
+bool MetricDepthNode::isConsistent(const FloorFit &fit) const {
+	if (mParams.maxFitChange <= 0.0) {
+		return true;
+	}
+	if (fit.shift > 0.0) {
+		return false;
+	}
+	if (mRecentSlopes.size() < kMinFitHistory) {
+		return true;
+	}
+	std::vector<double> slopes(mRecentSlopes.begin(), mRecentSlopes.end());
+	const auto middle = slopes.begin() + static_cast<std::ptrdiff_t>(slopes.size() / 2);
+	std::nth_element(slopes.begin(), middle, slopes.end());
+	return std::abs(fit.slope / *middle - 1.0) <= mParams.maxFitChange;
+}
+
 void MetricDepthNode::reportStats() {
 	const auto now = std::chrono::steady_clock::now();
 	if (now - mLastReport < 5s) {
 		return;
 	}
 	const size_t frames = mFramesFitted + mFramesHeld + mFramesDropped;
-	if (frames > 0) {
+	if (frames > 0 || mFramesLow > 0) {
+		std::string suffix;
+		if (mParams.minHeight > 0.0) {
+			suffix += " | " + std::to_string(mFramesLow) + " below min_height";
+		}
+		if (mParams.maxFitChange > 0.0) {
+			suffix += " | " + std::to_string(mFitsRejected) + " inconsistent";
+		}
+		if (!mParams.attitudeTopic.empty()) {
+			const double tilt = std::acos(std::clamp(mGravity.back().direction[1], -1.0, 1.0));
+			suffix += std::format(" | tilt {:.1f} deg", tilt * 180.0 / std::numbers::pi);
+		}
 		RCLCPP_INFO(this->get_logger(),
-			"%zu fitted, %zu held, %zu dropped | floor inliers %.0f%% | h %.2f m | s %.3f t %.3f", mFramesFitted,
-			mFramesHeld, mFramesDropped, 100.0 * mVoteShareSum / static_cast<double>(frames), mHeight,
-			mLastFit.has_value() ? mLastFit->slope * mHeight : 0.0, mLastFit.has_value() ? mLastFit->shift : 0.0);
+			"%zu fitted, %zu held, %zu dropped | floor inliers %.0f%% | h %.2f m | s %.3f t %.3f%s", mFramesFitted,
+			mFramesHeld, mFramesDropped, 100.0 * mVoteShareSum / static_cast<double>(std::max<size_t>(frames, 1)),
+			mHeight, mLastFit.has_value() ? mLastFit->slope * mHeight : 0.0,
+			mLastFit.has_value() ? mLastFit->shift : 0.0, suffix.c_str());
 	}
 	mLastReport   = now;
 	mVoteShareSum = 0.0;
-	mFramesFitted = mFramesHeld = mFramesDropped = 0;
+	mFramesFitted = mFramesHeld = mFramesDropped = mFramesLow = mFitsRejected = 0;
 }
 
 } // namespace dv_monodepth_node
