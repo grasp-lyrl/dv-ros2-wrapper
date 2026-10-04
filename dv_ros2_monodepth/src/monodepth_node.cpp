@@ -40,6 +40,7 @@ MonoDepthNode::MonoDepthNode(const rclcpp::NodeOptions &options) : rclcpp::Node(
 
 	mDisparityMin  = mParams.disparityMin;
 	mDisparityMax  = mParams.disparityMax;
+	mMinEvents     = mParams.minEvents;
 	mParamCallback = this->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &params) {
 		for (const auto &param : params) {
 			if (param.get_name() == "disparity_min") {
@@ -47,6 +48,9 @@ MonoDepthNode::MonoDepthNode(const rclcpp::NodeOptions &options) : rclcpp::Node(
 			}
 			else if (param.get_name() == "disparity_max") {
 				mDisparityMax = param.as_double();
+			}
+			else if (param.get_name() == "min_events") {
+				mMinEvents = static_cast<int>(param.as_int());
 			}
 		}
 		rcl_interfaces::msg::SetParametersResult result;
@@ -95,6 +99,7 @@ void MonoDepthNode::readParameters() {
 	mParams.windowStride         = this->declare_parameter("window_stride", mParams.windowStride);
 	mParams.sensorWidth          = this->declare_parameter("sensor_width", mParams.sensorWidth);
 	mParams.sensorHeight         = this->declare_parameter("sensor_height", mParams.sensorHeight);
+	mParams.minEvents            = this->declare_parameter("min_events", mParams.minEvents);
 	mParams.maxEvents            = this->declare_parameter("max_events", mParams.maxEvents);
 	mParams.deviceId             = this->declare_parameter("device_id", mParams.deviceId);
 	mParams.publishVisualization = this->declare_parameter("publish_visualization", mParams.publishVisualization);
@@ -115,6 +120,9 @@ void MonoDepthNode::readParameters() {
 	}
 	if (mParams.maxEvents < 0) {
 		throw std::invalid_argument("max_events must be zero (keep every event) or positive");
+	}
+	if (mParams.minEvents < 0) {
+		throw std::invalid_argument("min_events must be zero (run every window) or positive");
 	}
 }
 
@@ -203,6 +211,13 @@ void MonoDepthNode::inferenceLoop() {
 			continue;
 		}
 
+		const int minEvents = mMinEvents.load(std::memory_order_relaxed);
+		if (minEvents > 0 && window.size() < static_cast<size_t>(minEvents)) {
+			++mGated;
+			reportStats();
+			continue;
+		}
+
 		try {
 			const int64_t timestamp = window.getHighestTime();
 
@@ -226,17 +241,7 @@ void MonoDepthNode::inferenceLoop() {
 			mRunMs  += milliseconds(runStart, done);
 			mEventsSeen += static_cast<double>(window.size());
 			++mFramesDone;
-
-			const double sinceReport = milliseconds(mLastReport, done);
-			if (sinceReport >= 5000.0) {
-				RCLCPP_INFO(this->get_logger(),
-					"%.1f Hz | %.0f kev/window | pack %.1f ms | model %.1f ms",
-					(mFramesDone * 1000.0) / sinceReport, (mEventsSeen / mFramesDone) / 1000.0,
-					mPackMs / mFramesDone, mRunMs / mFramesDone);
-				mLastReport = done;
-				mFramesDone = 0;
-				mPackMs = mRunMs = mEventsSeen = 0.0;
-			}
+			reportStats();
 		}
 		catch (const c10::Error &exception) {
 			RCLCPP_ERROR(this->get_logger(), "Inference failed: %s", exception.what());
@@ -245,6 +250,27 @@ void MonoDepthNode::inferenceLoop() {
 			RCLCPP_ERROR(this->get_logger(), "Inference failed: %s", exception.what());
 		}
 	}
+}
+
+void MonoDepthNode::reportStats() {
+	const auto now           = std::chrono::steady_clock::now();
+	const double sinceReport = std::chrono::duration<double, std::milli>(now - mLastReport).count();
+	if (sinceReport < 5000.0) {
+		return;
+	}
+	const int minEvents = mMinEvents.load(std::memory_order_relaxed);
+	if (mFramesDone > 0.0) {
+		const std::string gated = minEvents > 0 ? " | " + std::to_string(static_cast<int>(mGated)) + " gated" : "";
+		RCLCPP_INFO(this->get_logger(), "%.1f Hz | %.0f kev/window | pack %.1f ms | model %.1f ms%s",
+			(mFramesDone * 1000.0) / sinceReport, (mEventsSeen / mFramesDone) / 1000.0, mPackMs / mFramesDone,
+			mRunMs / mFramesDone, gated.c_str());
+	}
+	else {
+		RCLCPP_INFO(this->get_logger(), "0.0 Hz | %.0f windows under min_events %d", mGated, minEvents);
+	}
+	mLastReport = now;
+	mFramesDone = mGated = 0.0;
+	mPackMs = mRunMs = mEventsSeen = 0.0;
 }
 
 torch::Tensor MonoDepthNode::packEvents(const dv::EventStore &events) {

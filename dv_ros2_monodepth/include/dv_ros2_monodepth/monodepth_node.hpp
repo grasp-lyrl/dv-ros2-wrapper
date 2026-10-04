@@ -33,6 +33,8 @@ struct Params {
 	int sensorHeight = 480;
 	/// Run on every Nth window and drop the rest.
 	int windowStride = 1;
+	/// Skip windows with fewer events; 0 runs them all.
+	int minEvents = 0;
 	/// Decimate windows above this many events; 0 keeps them all.
 	int maxEvents             = 0;
 	int deviceId              = 0;
@@ -82,15 +84,19 @@ private:
 	void publishDisparity(const torch::Tensor &disparity, int64_t timestamp, bool wantDisparity,
 		bool wantPreview);
 
+	/// Log throughput every 5 s.
+	void reportStats();
+
 	Params mParams;
 
 	rclcpp::Subscription<dv_ros2_msgs::EventArrayMessage>::SharedPtr mEventSubscriber;
 	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mDisparityPublisher;
 	rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr mVisualizationPublisher;
 
-	/// Preview range, retunable live through parameters.
+	/// Preview range and event gate, retunable live through parameters.
 	std::atomic<double> mDisparityMin = 0.0;
 	std::atomic<double> mDisparityMax = 2.5;
+	std::atomic<int> mMinEvents       = 0;
 	rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr mParamCallback;
 
 	dv::EventStreamSlicer mSlicer;
@@ -124,6 +130,7 @@ private:
 	double mPackMs     = 0.0;
 	double mRunMs      = 0.0;
 	double mEventsSeen = 0.0;
+	double mGated      = 0.0;
 };
 
 } // namespace dv_monodepth_node
