@@ -15,3 +15,13 @@
   depth: 10
   reliability: reliable
   durability: volatile
+/neurofly1/control_odom:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
+/neurofly1/zed_node/depth/camera_info:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
