@@ -32,6 +32,7 @@ def generate_launch_description():
         launch_arguments={
             'model_path': LaunchConfiguration('model_path'),
             'events_topic': LaunchConfiguration('events_topic'),
+            'capture': 'false',
         }.items()))
 
     ld.add_action(LoadComposableNodes(
