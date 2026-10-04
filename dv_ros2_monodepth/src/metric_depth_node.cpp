@@ -2,6 +2,7 @@
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
@@ -134,6 +135,8 @@ void MetricDepthNode::readParameters() {
 	mParams.undistortDepth   = this->declare_parameter("undistort_depth", mParams.undistortDepth);
 	mParams.minHeight        = this->declare_parameter("min_height", mParams.minHeight);
 	mParams.maxFitChange     = this->declare_parameter("max_fit_change", mParams.maxFitChange);
+	mParams.edgeJump         = this->declare_parameter("edge_jump", mParams.edgeJump);
+	mParams.edgeRadius       = this->declare_parameter("edge_radius", mParams.edgeRadius);
 
 	if (mParams.calibrationFile.empty()) {
 		mParams.calibrationFile
@@ -159,6 +162,9 @@ void MetricDepthNode::readParameters() {
 	}
 	if (mParams.minHeight < 0.0 || mParams.maxFitChange < 0.0) {
 		throw std::invalid_argument("min_height and max_fit_change must be zero (off) or positive");
+	}
+	if (mParams.edgeJump < 0.0 || mParams.edgeRadius < 0) {
+		throw std::invalid_argument("edge_jump and edge_radius must be zero or positive");
 	}
 }
 
@@ -206,37 +212,46 @@ void MetricDepthNode::buildUndistortion() {
 	const auto &info = mCameraInfo;
 	const cv::Matx33d cameraMatrix(info.k.data());
 	const cv::Size size(static_cast<int>(info.width), static_cast<int>(info.height));
+	cv::Mat pinhole;
 	cv::Mat mapX;
 	cv::Mat mapY;
+	// Alpha and balance 1 shorten the focal length until every sensor ray lands inside the image.
 	if (info.distortion_model == sensor_msgs::distortion_models::EQUIDISTANT) {
+		cv::fisheye::estimateNewCameraMatrixForUndistortRectify(
+			cameraMatrix, info.d, size, cv::Matx33d::eye(), pinhole, 1.0);
 		cv::fisheye::initUndistortRectifyMap(
-			cameraMatrix, info.d, cv::Matx33d::eye(), cameraMatrix, size, CV_32FC1, mapX, mapY);
+			cameraMatrix, info.d, cv::Matx33d::eye(), pinhole, size, CV_32FC1, mapX, mapY);
 	}
 	else {
-		cv::initUndistortRectifyMap(cameraMatrix, info.d, cv::noArray(), cameraMatrix, size, CV_32FC1, mapX, mapY);
+		pinhole = cv::getOptimalNewCameraMatrix(cameraMatrix, info.d, size, 1.0);
+		cv::initUndistortRectifyMap(cameraMatrix, info.d, cv::noArray(), pinhole, size, CV_32FC1, mapX, mapY);
 	}
 
 	mUndistortSource.resize(static_cast<size_t>(size.area()));
-	std::vector<bool> sampled(mUndistortSource.size(), false);
 	for (int v = 0; v < size.height; ++v) {
 		for (int u = 0; u < size.width; ++u) {
 			const auto x      = static_cast<int>(std::lround(mapX.at<float>(v, u)));
 			const auto y      = static_cast<int>(std::lround(mapY.at<float>(v, u)));
 			const bool inside = x >= 0 && x < size.width && y >= 0 && y < size.height;
-			const int32_t source = inside ? y * size.width + x : -1;
-			mUndistortSource[static_cast<size_t>(v * size.width + u)] = source;
-			if (inside) {
-				sampled[static_cast<size_t>(source)] = true;
-			}
+			mUndistortSource[static_cast<size_t>(v * size.width + u)] = inside ? y * size.width + x : -1;
 		}
 	}
 	mPublishedInfo.distortion_model = sensor_msgs::distortion_models::PLUMB_BOB;
 	mPublishedInfo.d.assign(5, 0.0);
+	std::copy(pinhole.begin<double>(), pinhole.end<double>(), mPublishedInfo.k.begin());
+	for (size_t row = 0; row < 3; ++row) {
+		std::copy_n(mPublishedInfo.k.begin() + 3 * row, 3, mPublishedInfo.p.begin() + 4 * row);
+	}
 
-	const auto unsampled = std::count(sampled.begin(), sampled.end(), false);
+	const auto &k      = mPublishedInfo.k;
+	const auto outside = std::count_if(mRays.begin(), mRays.end(), [&k, &size](const cv::Point2f &ray) {
+		const double u = k[0] * ray.x + k[2];
+		const double v = k[4] * ray.y + k[5];
+		return u < -0.5 || u > size.width - 0.5 || v < -0.5 || v > size.height - 0.5;
+	});
 	RCLCPP_INFO(this->get_logger(),
-		"Publishing depth undistorted to a %dx%d pinhole with the same K; %.1f%% of the sensor falls outside it.",
-		size.width, size.height, 100.0 * static_cast<double>(unsampled) / static_cast<double>(sampled.size()));
+		"Publishing depth undistorted to a %dx%d pinhole, fx %.1f fy %.1f; %.2f%% of sensor rays fall outside.",
+		size.width, size.height, k[0], k[4], 100.0 * static_cast<double>(outside) / static_cast<double>(mRays.size()));
 }
 
 void MetricDepthNode::undistort(sensor_msgs::msg::Image &depth) {
@@ -354,6 +369,9 @@ void MetricDepthNode::disparityCallback(const sensor_msgs::msg::Image::ConstShar
 		const bool valid       = std::isfinite(d) && gap > 0.0 && gap >= minGap && !beyondFloor;
 
 		out[i] = valid ? static_cast<float>(scale / gap) : invalid;
+	}
+	if (mParams.edgeJump > 0.0) {
+		dropEdges(out);
 	}
 	if (mParams.undistortDepth) {
 		undistort(*depth);
@@ -483,6 +501,25 @@ bool MetricDepthNode::isConsistent(const FloorFit &fit) const {
 	return std::abs(fit.slope / *middle - 1.0) <= mParams.maxFitChange;
 }
 
+void MetricDepthNode::dropEdges(float *depth) {
+	const auto invalid = static_cast<float>(mParams.invalidDepth);
+	cv::Mat image(static_cast<int>(mCameraInfo.height), static_cast<int>(mCameraInfo.width), CV_32F, depth);
+	mValid = image != invalid;
+	image.copyTo(mFarthest);
+	mFarthest.setTo(0.0f, ~mValid);
+	cv::dilate(mFarthest, mFarthest, cv::Mat());
+	image.copyTo(mNearest);
+	mNearest.setTo(std::numeric_limits<float>::infinity(), ~mValid);
+	cv::erode(mNearest, mNearest, cv::Mat());
+	mEdges = mValid & (mFarthest > (1.0 + mParams.edgeJump) * mNearest);
+
+	const int side = 2 * mParams.edgeRadius + 1;
+	cv::dilate(mEdges, mEdges, cv::getStructuringElement(cv::MORPH_RECT, {side, side}));
+	mEdges &= mValid;
+	image.setTo(invalid, mEdges);
+	mEdgeShareSum += static_cast<double>(cv::countNonZero(mEdges)) / std::max(cv::countNonZero(mValid), 1);
+}
+
 void MetricDepthNode::reportStats() {
 	const auto now = std::chrono::steady_clock::now();
 	if (now - mLastReport < 5s) {
@@ -501,6 +538,10 @@ void MetricDepthNode::reportStats() {
 			const double tilt = std::acos(std::clamp(mGravity.back().direction[1], -1.0, 1.0));
 			suffix += std::format(" | tilt {:.1f} deg", tilt * 180.0 / std::numbers::pi);
 		}
+		if (mParams.edgeJump > 0.0) {
+			const auto published = static_cast<double>(std::max<size_t>(mFramesFitted + mFramesHeld, 1));
+			suffix += std::format(" | {:.0f}% edge pixels dropped", 100.0 * mEdgeShareSum / published);
+		}
 		RCLCPP_INFO(this->get_logger(),
 			"%zu fitted, %zu held, %zu dropped | floor inliers %.0f%% | h %.2f m | s %.3f t %.3f%s", mFramesFitted,
 			mFramesHeld, mFramesDropped, 100.0 * mVoteShareSum / static_cast<double>(std::max<size_t>(frames, 1)),
@@ -509,6 +550,7 @@ void MetricDepthNode::reportStats() {
 	}
 	mLastReport   = now;
 	mVoteShareSum = 0.0;
+	mEdgeShareSum = 0.0;
 	mFramesFitted = mFramesHeld = mFramesDropped = mFramesLow = mFitsRejected = 0;
 }
 

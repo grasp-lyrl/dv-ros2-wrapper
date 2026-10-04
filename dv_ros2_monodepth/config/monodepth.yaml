@@ -17,6 +17,8 @@ metric_depth_node:
     height_topic: /neurofly1/mavros/distance_sensor  # sensor_msgs/Range; empty uses camera_height
     attitude_topic: /neurofly1/control_odom # nav_msgs/Odometry giving the floor fit gravity; empty assumes a level camera
     max_depth: 5.0            # Metres; 0 keeps every depth
+    edge_jump: 0.2            # Depth jump between neighbours, as a fraction of the nearer depth, that marks an edge; 0 keeps edges
+    edge_radius: 1            # Pixels dropped around an edge
     undistort_depth: true     # Publish metric depth as an undistorted pinhole image
     min_height: 0.15          # Metres; drop depth below it, 0 keeps all
     max_fit_change: 0.3       # Reject fits straying this fraction from recent ones; 0 accepts all

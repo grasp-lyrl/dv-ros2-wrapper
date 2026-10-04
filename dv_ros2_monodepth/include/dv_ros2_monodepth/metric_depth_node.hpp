@@ -42,12 +42,16 @@ struct MetricDepthParams {
 	int minInliers = 300;
 	/// How long the last fit stands in for frames without one; 0 drops them.
 	int fitHoldMs = 1000;
-	/// Publish depth resampled to a pinhole image with the calibration's K and no distortion.
+	/// Publish depth resampled to a distortion-free pinhole image that holds every sensor ray.
 	bool undistortDepth = false;
 	/// Frames taken below this height, in metres, are dropped; 0 keeps them all.
 	double minHeight = 0.0;
 	/// Reject a fit whose slope strays this fraction from the recent median, or whose shift is positive; 0 accepts all.
 	double maxFitChange = 0.0;
+	/// Depth jump between neighbouring pixels, as a fraction of the nearer depth, that marks an edge; 0 keeps edges.
+	double edgeJump = 0.0;
+	/// Pixels around an edge whose depth is dropped.
+	int edgeRadius = 3;
 };
 
 /// The floor line `d = slope * (r·g) + shift`; the depth scale is `slope * height`.
@@ -105,6 +109,9 @@ private:
 	/// Whether a fit agrees with the recently accepted ones.
 	[[nodiscard]] bool isConsistent(const FloorFit &fit) const;
 
+	/// Drop depth within edge_radius of a depth edge.
+	void dropEdges(float *depth);
+
 	void reportStats();
 
 	MetricDepthParams mParams;
@@ -119,7 +126,7 @@ private:
 	rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr mShiftPublisher;
 
 	sensor_msgs::msg::CameraInfo mCameraInfo;
-	/// What depth/camera_info carries: the calibration, or its K without distortion when undistorting.
+	/// What depth/camera_info carries: the calibration, or the pinhole holding every sensor ray when undistorting.
 	sensor_msgs::msg::CameraInfo mPublishedInfo;
 	double mHeight = 0.0;
 	/// Gravity from the latest odometry messages, oldest first; a level camera until the first arrives.
@@ -141,6 +148,12 @@ private:
 	std::vector<uint32_t> mScored;
 	std::vector<float> mSpread;
 
+	/// Per pixel, the farthest and nearest valid depth among its 3x3 neighbours.
+	cv::Mat mFarthest;
+	cv::Mat mNearest;
+	cv::Mat mValid;
+	cv::Mat mEdges;
+
 	std::mt19937 mRng{0};
 
 	std::optional<FloorFit> mLastFit;
@@ -152,6 +165,7 @@ private:
 	std::chrono::steady_clock::time_point mLastReport;
 	double mVoteShare     = 0.0;
 	double mVoteShareSum  = 0.0;
+	double mEdgeShareSum  = 0.0;
 	size_t mFramesFitted  = 0;
 	size_t mFramesHeld    = 0;
 	size_t mFramesDropped = 0;
