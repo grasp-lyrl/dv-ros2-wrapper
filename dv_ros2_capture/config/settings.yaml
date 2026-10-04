@@ -18,7 +18,7 @@
     transformImuToCameraFrame: true
     # If true, publish unbiased IMU data, that is IMU bias values that are read from
     # calibration file will be subtracted out of the raw IMU stream
-    unbiasedImuData: true
+    unbiasedImuData: false
     # Path to the camera calibration file
     cameraCalibrationFilePath: ""
     # Path to the aedat4 file, if not specified the first available camera will be read
@@ -36,9 +36,9 @@
     # DVXplorer / DVXplorerM IMU (BMI160) data rate. Live cameras only — ignored
     # when reading from an aedat4 file. The hardware delivers samples at this rate.
     # Accelerometer: 12.5Hz, 25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz
-    imuAccelDataRate: "200Hz"
+    imuAccelDataRate: "800Hz"
     # Gyroscope:     25Hz, 50Hz, 100Hz, 200Hz, 400Hz, 800Hz, 1600Hz, 3200Hz
-    imuGyroDataRate:  "200Hz"
+    imuGyroDataRate:  "800Hz"
     # IMU oversampling filter. Reduces noise at the cost of latency:
     #   normal — no oversampling, lowest latency, highest noise
     #   osr2   — 2x oversampling then decimate (medium)
