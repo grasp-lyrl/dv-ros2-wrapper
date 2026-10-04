@@ -29,7 +29,8 @@ rosdep install --from-paths src/dv-ros2-wrapper --ignore-src -r -y
 colcon build --symlink-install --parallel-workers 4 \
              --cmake-args -DCMAKE_BUILD_TYPE=Release \
                           -DCMAKE_C_COMPILER=gcc-13 \
-                          -DCMAKE_CXX_COMPILER=g++-13
+                          -DCMAKE_CXX_COMPILER=g++-13 \
+                          -DCUDAToolkit_ROOT=/usr/local/cuda-12.8
 ```
 
 ## Verifying the build
