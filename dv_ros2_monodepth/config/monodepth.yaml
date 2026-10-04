@@ -1,0 +1,27 @@
+monodepth_node:
+  ros__parameters:
+    window_ms: 50             # Must match the T the model was exported with
+    window_stride: 2          # Run on every Nth window
+    min_events: 30000         # Skip windows with fewer events; 0 runs all
+    max_events: 0             # 0 keeps every event
+    sensor_width: 640
+    sensor_height: 480
+    publish_visualization: true
+    disparity_min: 0.0        # Preview colormap range
+    disparity_max: 2.5
+
+metric_depth_node:
+  ros__parameters:
+    calibration_file: ""      # Empty uses dv_ros2_capture's calib_40deg.xml
+    camera_height: 1.0        # Metres above the floor until a height message arrives
+    height_topic: /neurofly1/mavros/distance_sensor  # sensor_msgs/Range; empty uses camera_height
+    attitude_topic: /neurofly1/control_odom # nav_msgs/Odometry giving the floor fit gravity; empty assumes a level camera
+    max_depth: 5.0            # Metres; 0 keeps every depth
+    undistort_depth: true     # Publish metric depth as an undistorted pinhole image
+    min_height: 0.15          # Metres; drop depth below it, 0 keeps all
+    max_fit_change: 0.3       # Reject fits straying this fraction from recent ones; 0 accepts all
+    fit_hold_ms: 1000         # Milliseconds the last floor fit is reused without a new one
+    ransac_iterations: 64
+    ransac_tolerance: 0.026   # Inlier band, as a fraction of the floor disparity spread
+    min_inlier_share: 0.25    # Share of floor candidates the fitted line must explain
+    min_inliers: 300          # Fewest floor pixels a fit may rest on

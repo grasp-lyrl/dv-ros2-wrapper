@@ -3,6 +3,9 @@
 Monocular depth from events (F3 + DepthAnythingV2, one AOTI `.pt2`), and metric depth from it by
 fitting the floor.
 
+Every setting except `model_path` and `events_topic` is in [config/monodepth.yaml](config/monodepth.yaml).
+With `--symlink-install`, an edit there takes effect at the next launch.
+
 ## Mapping a bag live
 
 Inside the driver container (`bash /home/richeek/GitHub/neurofly/docker/run.sh driver`), one shell
@@ -15,7 +18,7 @@ ros2 launch neurofly_interface planner_launch.launch.py depth_topic:=/depth came
 rviz2 -d /root/dv_ws/install/dv_ros2_monodepth/share/dv_ros2_monodepth/rviz/mapping.rviz
 ```
 ```
-ros2 launch dv_ros2_monodepth monodepth_bag.launch.py model_path:=/home/richeek/GitHub/neurosim/outputs/monoculardepth/f3depth_50ms_lens_ft60/depth_ep59_sm89_torch291.pt2 bag:=/data/nf1_40deg_treehouse_flight1 height_topic:=/neurofly1/mavros/distance_sensor rviz:=false undistort_depth:=true min_height:=0.15 min_events:=30000 max_fit_change:=0.3
+ros2 launch dv_ros2_monodepth monodepth_bag.launch.py model_path:=/home/richeek/GitHub/neurosim/outputs/monoculardepth/f3depth_50ms_lens_ft60/depth_ep59_sm89_torch291.pt2 bag:=/data/nf1_40deg_treehouse_flight1 rviz:=false
 ```
 
 Restart the mapper before each replay: it keeps adding to the previous map.
