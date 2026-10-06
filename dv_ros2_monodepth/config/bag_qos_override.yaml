@@ -25,3 +25,13 @@
   depth: 10
   reliability: reliable
   durability: volatile
+/neurofly1/zed_node/rgb/image_rect_color:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
+/neurofly1/zed_node/depth/depth_registered:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
