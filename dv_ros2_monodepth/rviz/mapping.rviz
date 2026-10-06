@@ -50,7 +50,7 @@ Visualization Manager:
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.05
+      Size (m): 0.1
       Style: Boxes
       Topic:
         Depth: 5
@@ -83,7 +83,7 @@ Visualization Manager:
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.05
+      Size (m): 0.1
       Style: Boxes
       Topic:
         Depth: 5
